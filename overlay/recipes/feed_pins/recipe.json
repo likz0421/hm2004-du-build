@@ -1,0 +1,32 @@
+{
+  "$schema": "../recipe.schema.json",
+  "name": "feed_pins",
+  "description": "把上游 feeds.conf 里 7 个未锁版本的 feed 全部锁到 pins.feeds 指定的 commit（需求文档「四、3」）",
+  "enabled": false,
+  "priority": 0,
+  "phase": "pre_feeds",
+  "depends": [],
+  "conflicts": [],
+  "tags": [
+    "feeds",
+    "reproducibility"
+  ],
+  "when": {
+    "targets": [
+      "lk_h3c_hm2004_du"
+    ],
+    "repo": [],
+    "branch": [],
+    "tags": []
+  },
+  "actions": {
+    "addFeeds": [],
+    "removeFeeds": [],
+    "importPackages": [],
+    "removePackageDirs": [],
+    "patches": [],
+    "files": [],
+    "configs": [],
+    "script": "apply.sh"
+  }
+}

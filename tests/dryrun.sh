@@ -77,12 +77,24 @@ PONWRT_REPO=https://github.com/LazuliKao/ponwrt
 PONWRT_BRANCH=feat/hm2004-npu
 PONWRT_SHA=$build_sha
 HONK_FEED_URL=https://github.com/kenzok8/openwrt-honk
-HONK_SHA=1111111111111111111111111111111111111111
+HONK_SHA=$FAKE_HONK_SHA
 FTTR_FEED_URL=https://github.com/rayniel/openwrt-hm2004-feed
-FTTR_SHA=2222222222222222222222222222222222222222
+FTTR_SHA=$FAKE_FTTR_SHA
 BUILD_TARGET=lk_h3c_hm2004_du
 IMAGE_PROFILE=h3c_hm2004-du
 DTS_COMPAT=h3c,hm2004-du
+EOF
+}
+
+FAKE_HONK_SHA=1111111111111111111111111111111111111111
+FAKE_FTTR_SHA=2222222222222222222222222222222222222222
+
+make_fake_pins_feeds() {
+    # 3 条就够测逻辑；SHA 用假值，和 make_pins 里的 HONK/FTTR 假 SHA 同一套。
+    cat >"$1" <<EOF
+packages https://github.com/immortalwrt/packages.git 3333333333333333333333333333333333333333
+luci https://github.com/immortalwrt/luci.git 4444444444444444444444444444444444444444
+pon_drivers https://github.com/pbs05/openwrt-pon-drivers.git 5555555555555555555555555555555555555555
 EOF
 }
 
@@ -108,11 +120,14 @@ CONFIG_NET_CLS_BPF=m
 CONFIG_NET_ACT_BPF=m
 EOF
 
-    cat >"$dir/feeds.conf" <<'EOF'
-src-git packages https://github.com/immortalwrt/packages.git
-src-git honk https://github.com/kenzok8/openwrt-honk.git^1111111111111111111111111111111111111111
-src-git hm2004 https://github.com/rayniel/openwrt-hm2004-feed.git^2222222222222222222222222222222222222222
-EOF
+    {
+        printf 'src-git honk https://github.com/kenzok8/openwrt-honk.git^%s\n' "$FAKE_HONK_SHA"
+        printf 'src-git hm2004 https://github.com/rayniel/openwrt-hm2004-feed.git^%s\n' "$FAKE_FTTR_SHA"
+        while read -r fname furl fsha; do
+            case "$fname" in '' | '#'*) continue ;; esac
+            printf 'src-git %s %s^%s\n' "$fname" "$furl" "$fsha"
+        done <"${PINS_FEEDS_FILE:?测试未设置 PINS_FEEDS_FILE}"
+    } >"$dir/feeds.conf"
 
     cat >"$dir/feeds/hm2004/original/driver/fmcs_load.c" <<'EOF'
 	ret = fmcs_bitstream_get_gpio(dev, "nconfig", GPIOD_OUT_HIGH, &bs->nconfig);
@@ -309,6 +324,8 @@ run_expect fail "引擎版本对不上要拦" "不是 pin" \
 say
 say "### 场景 2：assert_prebuild.sh"
 B=$WORK/build
+PINS_FEEDS_FILE=$WORK/pins.feeds
+make_fake_pins_feeds "$PINS_FEEDS_FILE"
 mkdir -p "$B"
 git -C "$B" init -q
 make_build_tree "$B"
@@ -317,10 +334,9 @@ commit_here "$B" tree
 BSHA=$(git -C "$B" rev-parse HEAD)
 make_pins "$WORK/pins4.env" "$E1SHA" "$BSHA"
 
-PINENV=("$B")
 prebuild() {
-    env PINS="$WORK/pins4.env" ENGINE_DIR="$E1" BUILD_DIR="$B" WITH_FTTR=1 \
-        bash "$REPO_DIR/scripts/assert_prebuild.sh"
+    env PINS="$WORK/pins4.env" PINS_FEEDS="$PINS_FEEDS_FILE" ENGINE_DIR="$E1" \
+        BUILD_DIR="$B" WITH_FTTR=1 bash "$REPO_DIR/scripts/assert_prebuild.sh"
 }
 run_expect pass "构建设置全绿" "" prebuild
 
@@ -339,6 +355,11 @@ echo "CONFIG_NET_CLS_BPF=m" >>"$B/target/linux/airoha/an7581/config-6.18"
 sed -i '/^src-git hm2004/d' "$B/feeds.conf"
 run_expect fail "fttr feed 没 pin 住要拦" "openwrt-hm2004-feed" prebuild
 echo "src-git hm2004 https://github.com/rayniel/openwrt-hm2004-feed.git^2222222222222222222222222222222222222222" >>"$B/feeds.conf"
+
+# 上游 feed 退回未锁版本（ponwrt 的 feeds.conf.default 本来就是这样）
+sed -i 's|^src-git luci .*|src-git luci https://github.com/immortalwrt/luci.git|' "$B/feeds.conf"
+run_expect fail "上游 feed 没锁版本要拦" "luci 没有锁到" prebuild
+sed -i 's|^src-git luci https://github.com/immortalwrt/luci.git$|src-git luci https://github.com/immortalwrt/luci.git^4444444444444444444444444444444444444444|' "$B/feeds.conf"
 
 mv "$B/private-key.pem" "$B/private-key.pem.bak"
 run_expect fail "缺签名私钥要拦" "APK_SIGNING_PRIVATE_KEY" prebuild
@@ -435,6 +456,70 @@ load_key() {
 }
 run_expect fail "两个密钥都没配要拦" "APK_SIGNING_PRIVATE_KEY" load_key "" "" ""
 run_expect fail "私钥读不出来要拦" "EC 私钥" load_key "not-a-real-key" "abc" "def"
+
+say
+say "### 场景 6：feed_pins/apply.sh 真的把未锁版本的上游 feed 锁住"
+FP=$WORK/feedpin
+mkdir -p "$FP/recipes/feed_pins"
+cp "$REPO_DIR/pins.feeds" "$FP/recipes/feed_pins/pins.feeds"
+# 用 ponwrt 上游 feeds.conf.default 的真实形态（一条都没锁）
+cat >"$FP/feeds.conf.default" <<'EOF'
+src-git packages https://github.com/immortalwrt/packages.git
+src-git luci https://github.com/immortalwrt/luci.git
+src-git routing https://github.com/openwrt/routing.git
+src-git telephony https://github.com/openwrt/telephony.git
+src-git video https://github.com/openwrt/video.git
+src-git pon_drivers https://github.com/pbs05/openwrt-pon-drivers.git
+src-git pon_userspace https://github.com/pbs05/openwrt-pon-userspace.git
+#src-git targets https://github.com/openwrt/targets.git
+EOF
+run_expect pass "锁版本并自检通过" "" \
+    env BUILD_DIR="$FP" RECIPE_DIR="$FP/recipes/feed_pins" \
+    bash "$REPO_DIR/overlay/recipes/feed_pins/apply.sh"
+
+locked=$(grep -cE '^src-git [a-z_]+ https://[^ ]+\^[0-9a-f]{40}$' "$FP/feeds.conf.default")
+if [ "$locked" -eq 7 ]; then
+    say "√ [7 条全部变成 ^<sha>，注释行没被动]"
+    pass=$((pass + 1))
+else
+    say "× [只有 $locked/7 条被锁上]"
+    grep -n 'src-git' "$FP/feeds.conf.default" | sed 's/^/    /'
+    failed=$((failed + 1))
+fi
+if grep -q '^#src-git targets' "$FP/feeds.conf.default"; then
+    say "√ [注释行保持原样]"
+    pass=$((pass + 1))
+else
+    say "× [注释行被误改]"
+    failed=$((failed + 1))
+fi
+
+# feeds.conf 与 default 同时存在时，两份都得锁（引擎只读其中一个，漏一个就是静默失效）
+cp "$FP/feeds.conf.default" "$FP/feeds.conf"
+printf 'src-git packages https://github.com/immortalwrt/packages.git\n' >"$FP/feeds.conf"
+printf 'src-git luci https://github.com/immortalwrt/luci.git\n' >>"$FP/feeds.conf"
+printf 'src-git routing https://github.com/openwrt/routing.git\n' >>"$FP/feeds.conf"
+printf 'src-git telephony https://github.com/openwrt/telephony.git\n' >>"$FP/feeds.conf"
+printf 'src-git video https://github.com/openwrt/video.git\n' >>"$FP/feeds.conf"
+printf 'src-git pon_drivers https://github.com/pbs05/openwrt-pon-drivers.git\n' >>"$FP/feeds.conf"
+printf 'src-git pon_userspace https://github.com/pbs05/openwrt-pon-userspace.git\n' >>"$FP/feeds.conf"
+run_expect pass "两份文件都锁" "" \
+    env BUILD_DIR="$FP" RECIPE_DIR="$FP/recipes/feed_pins" \
+    bash "$REPO_DIR/overlay/recipes/feed_pins/apply.sh"
+n2=$(grep -cE '^src-git [a-z_]+ https://[^ ]+\^[0-9a-f]{40}$' "$FP/feeds.conf")
+if [ "$n2" -eq 7 ]; then
+    say "√ [feeds.conf 也锁上了（$n2/7）]"
+    pass=$((pass + 1))
+else
+    say "× [feeds.conf 漏锁：$n2/7]"
+    failed=$((failed + 1))
+fi
+
+# 清单里 SHA 写错（不是 40 位）必须当场失败，不能退化成「不锁」
+printf 'packages https://github.com/immortalwrt/packages.git abc123\n' >"$FP/recipes/feed_pins/pins.feeds"
+run_expect fail "SHA 不是 40 位要拦" "不是 40 位十六进制" \
+    env BUILD_DIR="$FP" RECIPE_DIR="$FP/recipes/feed_pins" \
+    bash "$REPO_DIR/overlay/recipes/feed_pins/apply.sh"
 
 say "======================================"
 say "通过 $pass 项，失败 $failed 项"

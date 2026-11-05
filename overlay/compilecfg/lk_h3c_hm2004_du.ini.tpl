@@ -12,5 +12,5 @@ BUILD_DIR=ponwrt-an7581
 CONFIG_FRAGMENTS=proxy,ebpf_btf,honk@FTTR_FRAG@
 RECIPE_SET=mini
 TARGET_TAGS=an7581
-ADD_RECIPES=airoha_an7581,luci_app_airoha_npu,disable_initramfs,ebpf_btf,honk,disable_mosdns@FTTR_ADD@
+ADD_RECIPES=airoha_an7581,luci_app_airoha_npu,disable_initramfs,feed_pins,ebpf_btf,honk,disable_mosdns@FTTR_ADD@
 DISABLE_RECIPES=luci_app_cpu_temp_status,tailscale_awg

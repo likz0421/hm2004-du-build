@@ -15,12 +15,13 @@
 ## 1. 仓库结构与构建流程
 
 ```
-pins.env                     所有上游 commit 的唯一锚点
+pins.env                     上游仓库的 commit 锚点（引擎、源码树、参考树、两个附加 feed）
+pins.feeds                   源码树自带 7 个 feed 的 commit 锚点
 overlay/                     盖到引擎上的差异（本仓库真正的产物）
   compilecfg/lk_h3c_hm2004_du.ini.tpl    设备构建元信息（带 COMMIT_HASH）
   deconfig/lk_h3c_hm2004_du.config       设备 dotconfig
   deconfig/fragments/{ebpf_btf,honk,fttr}.config
-  recipes/ebpf_btf|honk|hm2004_fttr_feed|h3c-hm2004-du_fttr
+  recipes/feed_pins|ebpf_btf|honk|hm2004_fttr_feed|h3c-hm2004-du_fttr
 scripts/                     apply_overlay / preclone / load_signing_key
                              assert_prebuild / assert_artifacts / check_fttr_dts
 tests/                       dryrun.sh（门禁的正反分支）/ check_recipes.sh
@@ -96,6 +97,14 @@ pins.env
 openwrt，加 `pbs05/openwrt-pon-drivers`、`pbs05/openwrt-pon-userspace`）。文档里的
 `src-git base https://github.com/openwrt/openwrt.git;main` **不需要**——那棵树的 `target/linux/airoha`
 里**没有** `an7581-h3c-hm2004-du.dts`，设备集只有 gemtek/nokia/quantum（已对比确认）。
+
+**这 7 个 feed 在上游一个都没锁版本**（`pbs05/ponwrt@master` 的 `feeds.conf.default` 全是分支头），
+而参考仓库 `1018ji` 是 7 条全锁 `^<sha>` 的。文档「四、3」要防的正是「上游更新引入破坏性变更」，
+所以由 `overlay/recipes/feed_pins/` 在 `pre_feeds` 阶段把 7 条全部锁到 `pins.feeds` 指定的 commit，
+`assert_prebuild.sh` 再逐条核对。其中 `pon_drivers`/`pon_userspace` 两个 SHA 与 1018ji 的锁值一致，可交叉印证。
+
+> 残留缺口：引擎 `modules/feeds.sh` 会自己追加两条 bandix 源
+> （`timsaya/openwrt-bandix`、`timsaya/luci-app-bandix`），这两条不在我们的锁清单里，仍跟分支头走。
 
 文档留空的 `src-git honk <honk插件仓库地址>` 已查实：
 `kenzok8/openwrt-honk`（核心包 `honk` = dae 系 Rust 重写、eBPF 数据面；要求内核 6.12+、
@@ -183,7 +192,7 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
 * FTTR 公开 feed 的四个包名、`KCONFIG` 指向不存在的内核符号、驱动要的 GPIO con_id
   （`clk/data/nconfig/rst/status/conf-done`）与 ponwrt DTS 的 `fpga-*-gpios` 不一致。
 * 引擎的 recipe 校验程序与阶段列表（`tests/check_recipes.sh` 直接从 `recipe.sh` 抽取后运行）。
-* 本仓库的门禁脚本：`tests/dryrun.sh` 24 项正反分支全过（假目录树 + `dtc`/`readelf` PATH 桩）。
+* 本仓库的门禁脚本：`tests/dryrun.sh` 33 项正反分支全过（假目录树 + `dtc`/`readelf` PATH 桩）。
 
 **未验证（要说清楚，别当成已经成了）**
 
@@ -248,8 +257,12 @@ phase 永远不执行且不报错）、`when.targets` 与目标名不符（被�
 
 ## 8. 改版本
 
-只改 `pins.env`。每个 pin 的作用：
+只改 `pins.env` 和 `pins.feeds`。每个 pin 的作用：
 
+* `pins.feeds` —— 源码树自带 7 个 feed 的锁版本点，`feed_pins` recipe 在 `pre_feeds` 阶段改写、
+  `assert_prebuild.sh` 逐条核对。
+
+* `pins.feeds` —— 源码树自带 7 个 feed 的锁版本点；`feed_pins` recipe 在 pre_feeds 阶段改写，`assert_prebuild.sh` 逐条核对。
 * `ENGINE_SHA` —— 编排引擎。换它等于换整套构建行为，先看 `overlay.diff` 有没有变。
 * `PONWRT_SHA` —— 固件源码树，PON 硬件与 DTS 都在这。写进 ini 的 `COMMIT_HASH`，
   构建前后各校验一次 HEAD。

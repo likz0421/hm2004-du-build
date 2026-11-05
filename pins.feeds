@@ -1,0 +1,11 @@
+# 7 个 feed 的版本锚点：名字 仓库URL commit
+# 上游 pbs05/ponwrt 的 feeds.conf.default 一个都没锁（全是分支头），
+# 而需求文档「四、3」要求锁住上游防止破坏性变更；参考仓库 1018ji 是全锁的。
+# 这里补齐。pon_drivers/pon_userspace 的两个 SHA 与 1018ji 的一致，可交叉印证。
+packages https://github.com/immortalwrt/packages.git 395ca4d2df4754cdb8e89bc4b37cdbcf54d905b0
+luci https://github.com/immortalwrt/luci.git 319f7c96e3530246cf91cfdd9bacb3fa44dc3a4e
+routing https://github.com/openwrt/routing.git ea8633da9c461a9bdc62a0323439d31180762e03
+telephony https://github.com/openwrt/telephony.git 9bcb6d71db03377ff49ccb099be763add9a5b059
+video https://github.com/openwrt/video.git 4f1e5914fa4a74a5f989b4ff0ce3cea3fb089038
+pon_drivers https://github.com/pbs05/openwrt-pon-drivers.git 2f248394e62648800ef8d03ded623eb6d6059597
+pon_userspace https://github.com/pbs05/openwrt-pon-userspace.git cce9d756742487b378749c606b30e13ee9b0f093

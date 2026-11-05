@@ -102,6 +102,21 @@ if [ "$WITH_FTTR" = "1" ]; then
     need_file_has "$FEEDS" "$FTTR_FEED_URL.git^$FTTR_SHA"
 fi
 
+# --- 6b. 上游自带的那 7 个 feed 也必须锁版本（需求文档「四、3」）---
+PINS_FEEDS=${PINS_FEEDS:-$REPO_DIR/pins.feeds}
+if [ ! -f "$PINS_FEEDS" ]; then
+    missing+=("锁版本清单不存在：$PINS_FEEDS")
+    fail=1
+else
+    while read -r fname furl fsha; do
+        case "$fname" in '' | '#'*) continue ;; esac
+        if ! grep -qE "^src-git[[:space:]]+${fname}[[:space:]]+${furl}\^${fsha}\$" "$FEEDS"; then
+            missing+=("feed $fname 没有锁到 $fsha（现值：$(grep -E "src-git[[:space:]]+$fname" "$FEEDS" | head -1 || echo 无此行)）")
+            fail=1
+        fi
+    done <"$PINS_FEEDS"
+fi
+
 # --- 7. PON 与 honk 的运行期包 ---
 for p in PACKAGE_kmod-airoha-xpon PACKAGE_kmod-airoha-pon-frontend \
     PACKAGE_airoha-pond PACKAGE_airoha-ponctl PACKAGE_luci-app-pon \

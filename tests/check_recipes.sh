@@ -59,7 +59,7 @@ fi
 echo "引擎认识的阶段：$(printf '%s ' $phases)"
 
 # ---- 逐个验我们的 recipe ----
-for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr; do
+for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr feed_pins; do
     f="$REPO_DIR/overlay/recipes/$r/recipe.json"
     recipe_ok=1
     if [ ! -f "$f" ]; then

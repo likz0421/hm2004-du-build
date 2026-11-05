@@ -57,10 +57,18 @@ for frag in ebpf_btf honk fttr; do
 done
 
 echo "==> 安装 recipe（先删上游同名目录，避免留下没引用的旧文件）"
-for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr; do
+for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr feed_pins; do
     rm -rf "$WT/recipes/$r"
     cp -R "$REPO_DIR/overlay/recipes/$r" "$WT/recipes/$r"
 done
+
+# feed_pins 在构建期只认 recipe 目录里的那份清单；这里把根目录的 pins.feeds
+# 复制过去，并当场比对，杜绝两份清单各说各话。
+cp "$REPO_DIR/pins.feeds" "$WT/recipes/feed_pins/pins.feeds"
+cmp -s "$REPO_DIR/pins.feeds" "$WT/recipes/feed_pins/pins.feeds" || {
+    echo "pins.feeds 复制后不一致" >&2
+    exit 1
+}
 sed -e "s|@HONK_FEED_URL@|$HONK_FEED_URL|g" -e "s|@HONK_SHA@|$HONK_SHA|g" \
     "$WT/recipes/honk/recipe.json" >"$WT/recipes/honk/recipe.json.tmp" &&
     mv "$WT/recipes/honk/recipe.json.tmp" "$WT/recipes/honk/recipe.json"
@@ -80,6 +88,9 @@ for f in \
     "recipes/ebpf_btf/files/airoha_an7581_ebpf.config" \
     "recipes/honk/recipe.json" \
     "recipes/hm2004_fttr_feed/recipe.json" \
+    "recipes/feed_pins/recipe.json" \
+    "recipes/feed_pins/apply.sh" \
+    "recipes/feed_pins/pins.feeds" \
     "recipes/h3c-hm2004-du_fttr/recipe.json" \
     "recipes/h3c-hm2004-du_fttr/apply.sh"; do
     if [ ! -f "$WT/$f" ]; then
@@ -106,7 +117,7 @@ fi
 
 # recipe.json 必须符合引擎自己的 schema 校验入口，坏 JSON 在这里就拦掉。
 if command -v jq >/dev/null 2>&1; then
-    for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr; do
+    for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr feed_pins; do
         jq -e . "$WT/recipes/$r/recipe.json" >/dev/null || {
             echo "recipe.json 不是合法 JSON：$r" >&2
             exit 1
