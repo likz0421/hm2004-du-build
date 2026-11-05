@@ -156,6 +156,23 @@ if [ "$WITH_FTTR" = "1" ]; then
             fail=1
         fi
     fi
+    # 6.18 API 适配是否真的落上了（实测过一次：没它 fmcs.c 直接编不过）
+    fttr_src="$BUILD_DIR/feeds/hm2004/original/driver/fmcs.c"
+    if [ -f "$fttr_src" ]; then
+        # 判据要盯「还在不用被删掉的符号」，不能只盯补丁函数名存不存在——
+        # 本地实现和调用点分两处，只看一处会漏判。
+        if grep -qE '\.llseek[[:space:]]*=[[:space:]]*no_llseek,' "$fttr_src"; then
+            missing+=("fmcs.c 还在用被 v6.x 删除的 no_llseek：6.18 适配补丁没打上，编译必炸")
+            fail=1
+        fi
+        if ! grep -q 'strscpy(family->name' "$fttr_src"; then
+            missing+=("fmcs.c 还在给 genl_family.name 赋值：它是 char[GENL_NAMSIZ] 数组，编译会直接报错")
+            fail=1
+        fi
+    else
+        missing+=("找不到 feed 里的 fmcs.c：$fttr_src")
+        fail=1
+    fi
 fi
 
 # --- 8. apk 打包与签名（产物要能被设备上的 apk 信任，密钥必须来自 Secrets）---

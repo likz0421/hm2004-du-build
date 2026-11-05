@@ -58,7 +58,45 @@ else
     echo "fttr: 已在驱动 Makefile 追加 obj-m 与 CONFIG_FTTR_FMCS_LOAD_AT_PROBE 宏"
 fi
 
-# ---- 3) 自检：确认两处修正真的落到了文件里 ----
+# ---- 3) 驱动 C 源码对 6.18 内核 API 的适配 ----
+# 实测（构建 42098806007 的日志）：obj-m 修正生效后，fmcs.c 自己编不过——
+#   fmcs.c:636 error: 'no_llseek' undeclared            （该符号在 v6.x 已删除）
+#   fmcs.c:918 error: assignment to expression with array type
+#                                                       （genl_family.name 是 char[GENL_NAMSIZ]）
+# 这是文档「二、约束：驱动补丁要适配当前内核版本」要求的那件事，
+# 补丁按 pbs05/ponwrt 用的 6.18.55 头文件核对后做成（见 patches/*.patch 的说明）。
+SRC="$BUILD_DIR/feeds/hm2004/original/driver/fmcs.c"
+PATCH="$RECIPE_DIR/patches/fmcs-kernel6.18-adapt.patch"
+for f in "$SRC" "$PATCH"; do
+    if [ ! -f "$f" ]; then
+        echo "fttr: 期待的文件不存在：$f" >&2
+        exit 1
+    fi
+done
+
+if grep -q 'fmcs_no_llseek' "$SRC"; then
+    echo "fttr: 驱动源码已打过 6.18 适配补丁，跳过"
+else
+    if ! (cd "$BUILD_DIR" && patch -p1 -N --fuzz=0 -i "$PATCH"); then
+        echo "× fttr: 6.18 适配补丁打不上（--fuzz=0，上下文必须逐行对得上）——" >&2
+        echo "  feed 的 fmcs.c 内容变了。必须重新核对 no_llseek / genl_family.name" >&2
+        echo "  两处再更新补丁，不能凑合着打上。" >&2
+        exit 1
+fi
+    echo "fttr: 已应用 6.18 API 适配补丁"
+fi
+
+# ---- 4) 自检：确认两处真实报错点都被改掉 ----
+if grep -q '^[[:space:]]*\.llseek[[:space:]]*=[[:space:]]*no_llseek,' "$SRC"; then
+    echo "fttr: 自检失败，仍然在用被删除的 no_llseek：$SRC" >&2
+    exit 1
+fi
+if ! grep -q 'strscpy(family->name' "$SRC"; then
+    echo "fttr: 自检失败，genl_family.name 还是赋值写法（它是数组，编译会直接报错）" >&2
+    exit 1
+fi
+
+# ---- 5) 自检：确认前两处修正真的落到了文件里 ----
 if grep -q '^[[:space:]]*KCONFIG:=CONFIG_FTTR_FMCS' "$PKG_MK"; then
     echo "fttr: 自检失败，KCONFIG 行仍在 $PKG_MK" >&2
     exit 1

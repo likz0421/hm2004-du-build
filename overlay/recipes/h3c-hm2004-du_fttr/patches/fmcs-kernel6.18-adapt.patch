@@ -1,0 +1,41 @@
+--- a/feeds/hm2004/original/driver/fmcs.c
++++ b/feeds/hm2004/original/driver/fmcs.c
+@@ -31,6 +31,7 @@
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/spi/spi.h>
++#include <linux/string.h>
+ #include <linux/uaccess.h>
+ #include <linux/wait.h>
+ #include <net/genetlink.h>
+@@ -625,6 +626,12 @@
+ 	return ret;
+ }
+ 
++/* no_llseek() 已被 v6.x 内核删除；这里保留它原本返回 -ESPIPE 的语义。 */
++static loff_t fmcs_no_llseek(struct file *file, loff_t offset, int whence)
++{
++	return -ESPIPE;
++}
++
+ static const struct file_operations fmcs_mci_fops = {
+ 	.owner		= THIS_MODULE,
+ 	.open		= fmcs_mci_open,
+@@ -633,7 +640,7 @@
+ #ifdef CONFIG_COMPAT
+ 	.compat_ioctl	= fmcs_mci_ioctl,
+ #endif
+-	.llseek		= no_llseek,
++	.llseek		= fmcs_no_llseek,
+ };
+ 
+ static int fmcs_mci_init(struct fmcs_dev *fmcs)
+@@ -915,7 +922,7 @@
+ 	for (i = 0; i < FMCS_GENL_NUM; i++) {
+ 		struct genl_family *family = &fmcs_genl_families[i];
+ 
+-		family->name		= fmcs_genl_names[i];
++		strscpy(family->name, fmcs_genl_names[i], sizeof(family->name));
+ 		family->version		= FMCS_GENL_VERSION;
+ 		family->maxattr		= FMCS_ATTR_MAX;
+ 		family->policy		= fmcs_genl_policy;

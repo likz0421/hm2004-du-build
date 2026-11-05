@@ -134,7 +134,14 @@ EOF
 	ret = fmcs_bitstream_get_gpio(dev, "clk", GPIOD_OUT_LOW, &bs->clk);
 	ret = fmcs_bitstream_get_gpio(dev, "data", GPIOD_OUT_LOW, &bs->data);
 EOF
-    : >"$dir/feeds/hm2004/original/driver/fmcs.c"
+    cat >"$dir/feeds/hm2004/original/driver/fmcs.c" <<'EOF'
+static loff_t fmcs_no_llseek(struct file *file, loff_t offset, int whence)
+{
+	return -ESPIPE;
+}
+	.llseek		= fmcs_no_llseek,
+	strscpy(family->name, fmcs_genl_names[i], sizeof(family->name));
+EOF
 
     # apply.sh 处理后的形态（没有 KCONFIG 行、驱动是 obj-m）
     mkdir -p "$dir/package/feeds/hm2004/fttr-fmcs"
@@ -393,6 +400,14 @@ sed -i '/CONFIG_FTTR_FMCS_LOAD_AT_PROBE=1/d' "$B/feeds/hm2004/original/driver/Ma
 run_expect fail "驱动缺位流加载宏要拦" "LOAD_AT_PROBE" prebuild
 echo "ccflags-y += -DCONFIG_FTTR_FMCS_LOAD_AT_PROBE=1" >>"$B/feeds/hm2004/original/driver/Makefile"
 
+sed -i 's|= fmcs_no_llseek,|= no_llseek,|' "$B/feeds/hm2004/original/driver/fmcs.c"
+run_expect fail "6.18 适配没落上要拦" "no_llseek" prebuild
+sed -i 's|= no_llseek,|= fmcs_no_llseek,|' "$B/feeds/hm2004/original/driver/fmcs.c"
+
+sed -i '/strscpy(family->name/d' "$B/feeds/hm2004/original/driver/fmcs.c"
+run_expect fail "genl name 还是赋值要拦" "genl_family.name" prebuild
+echo "	strscpy(family->name, fmcs_genl_names[i], sizeof(family->name));" >>"$B/feeds/hm2004/original/driver/fmcs.c"
+
 run_expect pass "补回之后重新全绿" "" prebuild
 
 commit_here "$B" drift --allow-empty
@@ -570,6 +585,50 @@ printf 'packages https://github.com/immortalwrt/packages.git abc123\n' >"$FP/rec
 run_expect fail "SHA 不是 40 位要拦" "不是 40 位十六进制" \
     env BUILD_DIR="$FP" RECIPE_DIR="$FP/recipes/feed_pins" \
     bash "$REPO_DIR/overlay/recipes/feed_pins/apply.sh"
+
+say
+say "### 场景 7：fttr 的 6.18 API 适配补丁（fmcs.c）"
+# 夹具不复制第三方源码，而是从补丁自身重建：取每个 hunk 的上下文与删除行。
+# 这样补丁文件和测试永远同步；而且 patch 用 --fuzz=0，上下文对不上就当场失败。
+FT=$WORK/fttrpatch
+RECIPE_SRC="$REPO_DIR/overlay/recipes/h3c-hm2004-du_fttr"
+mkdir -p "$FT/feeds/hm2004/original/driver" "$FT/package/feeds/hm2004/fttr-fmcs"
+awk '/^@@/ { inh = 1; next }
+     /^--- / || /^\+\+\+ / || /^diff / { next }
+     inh && (/^ / || /^-/) { print substr($0, 2) }' \
+    "$RECIPE_SRC/patches/fmcs-kernel6.18-adapt.patch" >"$FT/feeds/hm2004/original/driver/fmcs.c"
+printf 'define KernelPackage/fttr-fmcs\n  KCONFIG:=CONFIG_FTTR_FMCS=m CONFIG_FTTR_FMCS_LOAD_AT_PROBE=y\nendef\n' \
+    >"$FT/package/feeds/hm2004/fttr-fmcs/Makefile"
+printf 'obj-$(CONFIG_FTTR_FMCS)\t\t+= fttr-fmcs.o\n' >"$FT/feeds/hm2004/original/driver/Makefile"
+
+run_fttr() {
+    env BUILD_DIR="$FT" RECIPE_DIR="$RECIPE_SRC" bash "$RECIPE_SRC/apply.sh"
+}
+run_expect pass "补丁能打上且自检通过" "" run_fttr
+if grep -q 'strscpy(family->name' "$FT/feeds/hm2004/original/driver/fmcs.c" &&
+    ! grep -q '= no_llseek,' "$FT/feeds/hm2004/original/driver/fmcs.c"; then
+    say "√ [no_llseek 与 genl name 两处都改掉了]"
+    pass=$((pass + 1))
+else
+    say "× [补丁打完但目标写法还在]"
+    failed=$((failed + 1))
+fi
+run_expect pass "第二次跑不重复打" "" run_fttr
+
+# 上游文件漂移时，fuzz=0 必须让它炸出来，而不是凑合打上
+sed -i 's|\.llseek\t\t= fmcs_no_llseek,|.llseek\t\t= some_other_llseek,|' \
+    "$FT/feeds/hm2004/original/driver/fmcs.c"
+cp "$RECIPE_SRC/patches/fmcs-kernel6.18-adapt.patch" "$WORK/patch.copy"
+printf 'define KernelPackage/fttr-fmcs\n  KCONFIG:=CONFIG_FTTR_FMCS=m CONFIG_FTTR_FMCS_LOAD_AT_PROBE=y\nendef\n' \
+    >"$FT/package/feeds/hm2004/fttr-fmcs/Makefile"
+printf 'obj-$(CONFIG_FTTR_FMCS)\t\t+= fttr-fmcs.o\n' >"$FT/feeds/hm2004/original/driver/Makefile"
+awk '/^@@/ { inh = 1; next }
+     /^--- / || /^\+\+\+ / || /^diff / { next }
+     inh && (/^ / || /^-/) { print substr($0, 2) }' "$WORK/patch.copy" \
+    >"$FT/feeds/hm2004/original/driver/fmcs.c"
+printf 'xx\n' >>"$FT/feeds/hm2004/original/driver/fmcs.c"
+sed -i 's|#include <linux/uaccess.h>|#include <linux/whatever.h>|' "$FT/feeds/hm2004/original/driver/fmcs.c"
+run_expect fail "feed 源码漂移要拦" "打不上" run_fttr
 
 say "======================================"
 say "通过 $pass 项，失败 $failed 项"

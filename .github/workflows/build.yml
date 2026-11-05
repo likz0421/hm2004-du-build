@@ -170,7 +170,11 @@ jobs:
         working-directory: ${{ github.workspace }}/engine
         env:
           ADD_CONFIG_FRAGMENTS: ${{ inputs.extra_fragments }}
-        run: ./build.sh "$BUILD_TARGET" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+        run: |
+          # 没有 pipefail 的话，管道退出码取的是 tee 的：build.sh 编译失败也会被判成
+          # 这一步成功（实测发生过，红的是后面的产物核验，日志里还写着 success）。
+          set -o pipefail
+          ./build.sh "$BUILD_TARGET" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
       - name: 收集产物
         if: always()
