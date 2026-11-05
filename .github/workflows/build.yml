@@ -29,7 +29,7 @@ on:
 run-name: HM2004-DU ${{ inputs.with_fttr && 'FTTR开' || 'FTTR关' }} · ${{ inputs.preflight_only && '仅核验' || '完整构建' }}
 
 concurrency:
-  group: hm2004-du-build
+  group: hm2004-du-${{ inputs.with_fttr }}
   cancel-in-progress: false
 
 permissions:
