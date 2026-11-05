@@ -68,6 +68,10 @@ pins.env
    不适用于「自有仓库 + 按 SHA 取上游」的约束。
 3. 它用 `actions/cache@v4 path: dl` 缓存下载；引擎用的是 `.ccache` + `staging_dir` 两级缓存，
    已经覆盖同一目的，不重复引入。
+4. 它自维护的两个内核补丁（`hack-6.18/951-net-tcp-bbr3-support.patch`、
+   `pending-6.18/675-02-netfilter-bridge-...patch`）**不需要移植**：这两个文件在
+   `pbs05/ponwrt@master` 里本来就有（已逐个列目录确认）。1018ji 维护的是「上游 bump 后重新
+   打上」的版本，那是它那棵 merge 树才需要的动作；我们的树不做 merge，直接用 ponwrt 自带的。
 
 ### 二、内核必选配置
 
