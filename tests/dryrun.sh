@@ -434,6 +434,18 @@ run_expect fail "TC 模块没生成要拦" "cls_bpf.ko" artifacts
 
 sed -i '/^honk /d;/^luci-app-honk /d' "$FW"/*rootfs.manifest
 run_expect fail "清单里没 honk 要拦" "honk" artifacts
+sed -i '$a honk - 2026.11.06 - aarch64_cortex-a53\nluci-app-honk - 2026.11.06 - all' \
+    "$FW"/ponwrt-airoha-an7581-h3c_hm2004-du-rootfs.manifest
+
+# 多 profile 场景：混进一份别的机型的清单，必须挑本机型那份
+printf 'nothing - 0 - all\n' >"$FW/openwrt-airoha-an7581-gemtek_w1700k-rootfs.manifest"
+run_expect pass "有多份清单时挑本机型那份" "" artifacts
+
+# 两份都不是本机型时，不许退回去随便信一份
+mv "$FW"/ponwrt-airoha-an7581-h3c_hm2004-du-rootfs.manifest "$FW/h3c-renamed.manifest"
+run_expect fail "没有本机型的清单就不许判" "无法确定该信哪一份" artifacts
+mv "$FW/h3c-renamed.manifest" "$FW"/ponwrt-airoha-an7581-h3c_hm2004-du-rootfs.manifest
+rm -f "$FW/openwrt-airoha-an7581-gemtek_w1700k-rootfs.manifest"
 
 say
 say "### 场景 4：check_fttr_dts.sh"

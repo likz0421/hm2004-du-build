@@ -109,13 +109,20 @@ else
 fi
 
 # --- 4. 装进 rootfs 的包（用固件自带的 manifest 核对）---
-manifest=""
-for m in "$FW_DIR"/*.manifest; do
-    [ -f "$m" ] && manifest=$m
-done
+# 多 profile 构建会有多份 manifest，必须用本机型那一份；挑错文件等于没检查。
+manifest=$(find "$FW_DIR" -maxdepth 1 -type f -name "*${IMAGE_PROFILE}*.manifest" | head -1)
 if [ -z "$manifest" ]; then
-    bad "firmware/ 里没有 .manifest，无法核对装机包"
-else
+    count=$(find "$FW_DIR" -maxdepth 1 -type f -name '*.manifest' | wc -l)
+    if [ "$count" = "1" ]; then
+        manifest=$(find "$FW_DIR" -maxdepth 1 -type f -name '*.manifest' | head -1)
+        echo "! 没有带机型名的 manifest，退回到唯一的那份：$(basename "$manifest")" >&2
+    elif [ "$count" = "0" ]; then
+        bad "firmware/ 里一份 .manifest 都没有，无法核对装机包"
+    else
+        bad "有 $count 份 manifest 但没有一份带机型名 $IMAGE_PROFILE，无法确定该信哪一份"
+    fi
+fi
+if [ -n "$manifest" ]; then
     ok "清单：$(basename "$manifest")"
     in_manifest() {
         # 清单行形如「kmod-sched-bpf - 6.18.55 - aarch64_cortex-a53」，
