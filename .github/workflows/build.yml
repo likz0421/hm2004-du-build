@@ -1,0 +1,247 @@
+name: HM2004-DU 固件构建
+
+# 需求文档《H3C-HM2004-DU 固件编译需求整理（GitHub Actions构建）》的实现。
+# 主干 = LazuliKao/wrt_release（按 SHA 取），PON 硬件层 = ponwrt（按 SHA 取），
+# 构建逻辑参考 1018ji/merge-immortalwrt-ponwrt，本仓库只放差异（overlay/）。
+#
+# 需要配置的 Secrets（本文件里没有任何密钥）：
+#   APK_SIGNING_PRIVATE_KEY   必需：apk 软件仓库签名私钥（private-key.pem 全文）
+#   APK_SIGNING_PUBLIC_KEY    可选：配了会校验公私钥自洽
+#   USIGN_PRIVATE/USIGN_PUBLIC 可选：固件元数据签名；缺了会降级为构建系统临时钥匙并打印说明
+# 生成命令见 README 第 5 节。
+
+on:
+  workflow_dispatch:
+    inputs:
+      with_fttr:
+        description: 带上 FTTR 组件（公开源 rayniel/openwrt-hm2004-feed；见 README 第 6 节的运行时限制）
+        type: boolean
+        default: true
+      extra_fragments:
+        description: 追加引擎配置片段，逗号分隔（例如 docker_deps）
+        required: false
+        default: ""
+      preflight_only:
+        description: 只跑到 make defconfig 并做构建设置核验，不出固件（约 20 分钟）
+        type: boolean
+        default: false
+
+run-name: HM2004-DU ${{ inputs.with_fttr && 'FTTR开' || 'FTTR关' }} · ${{ inputs.preflight_only && '仅核验' || '完整构建' }}
+
+concurrency:
+  group: hm2004-du-build
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  ENGINE_DIR: ${{ github.workspace }}/engine
+  BUILD_TARGET: lk_h3c_hm2004_du
+
+jobs:
+  build:
+    name: 编译 h3c_hm2004_du
+    runs-on: ubuntu-24.04
+    timeout-minutes: 420
+    outputs:
+      date: ${{ steps.vars.outputs.DATE }}
+      asset_prefix: ${{ steps.vars.outputs.ASSET_PREFIX }}
+      release_title: ${{ steps.vars.outputs.RELEASE_TITLE }}
+
+    steps:
+      - name: 清理跑机自带内容
+        run: |
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo rm -rf /usr/share/swift || true
+          sudo -E apt-get autoremove --purge -y || true
+          sudo -E apt-get clean || true
+          df -hT
+
+      - name: 取本工程
+        uses: actions/checkout@v4
+
+      - name: 装编译环境
+        run: |
+          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          # dwarves 提供 pahole，DEBUG_INFO_BTF 没有它就生不出 .BTF 段。
+          sudo -E apt -yqq install dwarves dos2unix jq openssl device-tree-compiler binutils
+          sudo -E apt -yqq clean
+
+      - name: 计算输出名与日期
+        id: vars
+        run: |
+          d=$(TZ=Asia/Shanghai date +%Y%m%d)
+          echo "DATE=$d" >>"$GITHUB_OUTPUT"
+          echo "ASSET_PREFIX=HM2004-DU-wrtRelease-FTTR-eBPF-HONK-stable-$d" >>"$GITHUB_OUTPUT"
+          echo "RELEASE_TITLE=HM2004-DU-wrtRelease-FTTR-eBPF-HONK-稳定版_$d" >>"$GITHUB_OUTPUT"
+
+      - name: 校验 pins.env 里的上游提交真实存在
+        run: |
+          set -eu
+          . "$GITHUB_WORKSPACE/pins.env"
+          for pair in "$ENGINE_REPO:$ENGINE_SHA" "$PONWRT_REPO:$PONWRT_SHA" "$MERGE_REPO:$MERGE_SHA" "$HONK_FEED_URL:$HONK_SHA" "$FTTR_FEED_URL:$FTTR_SHA"; do
+            repo=${pair%:*}
+            sha=${pair##*:}
+            path=${repo#https://github.com/}
+            got=$(gh api "repos/$path/commits/$sha" --jq '.sha' || echo 取不到)
+            if [ "$got" != "$sha" ]; then
+              echo "× $path 里没有提交 $sha（实际返回：$got）" >&2
+              echo "  pins.env 写错了，或者该提交已被 force-push 掉。" >&2
+              exit 1
+            fi
+            echo "√ $path @ ${sha:0:8}"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 取引擎并叠加 overlay
+        run: bash "$GITHUB_WORKSPACE/scripts/apply_overlay.sh"
+        env:
+          WITH_FTTR: ${{ inputs.with_fttr && '1' || '0' }}
+          PINS: ${{ github.workspace }}/pins.env
+          ENGINE_DIR: ${{ github.workspace }}/engine
+
+      - name: 本工程自检
+        # 门禁代码自己也要先过一遍：假树正反分支 + 用引擎校验器验我们的 recipe。
+        run: |
+          bash "$GITHUB_WORKSPACE/tests/dryrun.sh"
+          ENGINE_DIR="$GITHUB_WORKSPACE/engine" bash "$GITHUB_WORKSPACE/tests/check_recipes.sh"
+
+      - name: 按 SHA 取固件源码树
+        run: bash "$GITHUB_WORKSPACE/scripts/preclone.sh"
+        env:
+          PINS: ${{ github.workspace }}/pins.env
+          ENGINE_DIR: ${{ github.workspace }}/engine
+
+      - name: 载入签名密钥
+        run: bash "$GITHUB_WORKSPACE/scripts/load_signing_key.sh"
+        env:
+          BUILD_DIR: ${{ github.workspace }}/engine/action_build
+          APK_SIGNING_PRIVATE_KEY: ${{ secrets.APK_SIGNING_PRIVATE_KEY }}
+          APK_SIGNING_PUBLIC_KEY: ${{ secrets.APK_SIGNING_PUBLIC_KEY }}
+          USIGN_PRIVATE: ${{ secrets.USIGN_PRIVATE }}
+          USIGN_PUBLIC: ${{ secrets.USIGN_PUBLIC }}
+
+      - name: 预检——只跑到 defconfig
+        working-directory: ${{ github.workspace }}/engine
+        env:
+          ADD_CONFIG_FRAGMENTS: ${{ inputs.extra_fragments }}
+        run: ./build.sh "$BUILD_TARGET" debug
+
+      - name: 构建设置核验（BTF / profile / feed pin / 包选择）
+        run: bash "$GITHUB_WORKSPACE/scripts/assert_prebuild.sh"
+        env:
+          PINS: ${{ github.workspace }}/pins.env
+          ENGINE_DIR: ${{ github.workspace }}/engine
+          WITH_FTTR: ${{ inputs.with_fttr && '1' || '0' }}
+
+      - name: 配置快照（预检）
+        if: always()
+        run: |
+          set -eu
+          mkdir -p "$GITHUB_WORKSPACE/snapshot"
+          cp "$ENGINE_DIR/action_build/.config" "$GITHUB_WORKSPACE/snapshot/config.preflight" || true
+          cp "$GITHUB_WORKSPACE/overlay.diff" "$GITHUB_WORKSPACE/snapshot/" 2>/dev/null || true
+
+      - name: 完整编译
+        if: ${{ !inputs.preflight_only }}
+        working-directory: ${{ github.workspace }}/engine
+        env:
+          ADD_CONFIG_FRAGMENTS: ${{ inputs.extra_fragments }}
+        run: ./build.sh "$BUILD_TARGET" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: 产物核验（认证物，不信日志）
+        if: ${{ !inputs.preflight_only }}
+        run: bash "$GITHUB_WORKSPACE/scripts/assert_artifacts.sh"
+        env:
+          PINS: ${{ github.workspace }}/pins.env
+          ENGINE_DIR: ${{ github.workspace }}/engine
+          BUILD_DIR: ${{ github.workspace }}/engine/action_build
+          FW_DIR: ${{ github.workspace }}/engine/firmware
+          WITH_FTTR: ${{ inputs.with_fttr && '1' || '0' }}
+
+      - name: 收集产物
+        if: ${{ !inputs.preflight_only && always() }}
+        run: |
+          set -eu
+          out="$GITHUB_WORKSPACE/release"
+          mkdir -p "$out/firmware"
+          if [ -d "$ENGINE_DIR/firmware" ]; then
+            cp -f "$ENGINE_DIR"/firmware/* "$out/firmware/" 2>/dev/null || true
+          fi
+          cp "$ENGINE_DIR/action_build/.config" "$out/config.seed" 2>/dev/null || true
+          cp "$ENGINE_DIR/action_build/config.buildinfo" "$out/" 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/overlay.diff" "$out/" 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/build.log" "$out/" 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/pins.env" "$out/"
+
+          # kmod 包单独打包：刷机后想补驱动不用再重编整份固件。
+          if [ -d "$ENGINE_DIR/action_build/bin" ]; then
+            find "$ENGINE_DIR/action_build/bin" -type f \( -name 'kmod*.apk' -o -name 'kmod*.ipk' \) \
+              -printf '%P\n' | sort >"$GITHUB_WORKSPACE/kmod-list.txt" || true
+            if [ -s "$GITHUB_WORKSPACE/kmod-list.txt" ]; then
+                tar -C "$ENGINE_DIR/action_build/bin" -czf "$out/kmods.tar.gz" \
+                  -T "$GITHUB_WORKSPACE/kmod-list.txt"
+                echo "kmod 包 $(wc -l <"$GITHUB_WORKSPACE/kmod-list.txt") 个"
+            else
+                echo "! 没找到任何 kmod 包文件，kmods.tar.gz 不生成" >&2
+            fi
+          fi
+
+          if [ -d "$out/firmware" ]; then
+            (cd "$out/firmware" && sha256sum * >"$out/SHA256SUMS.txt" 2>/dev/null || true)
+          fi
+          ls -l "$out" "$out/firmware" 2>/dev/null || true
+
+      - name: 上传构建产物
+        if: ${{ !inputs.preflight_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.vars.outputs.ASSET_PREFIX }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 上传配置快照
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-snapshot-${{ steps.vars.outputs.DATE }}
+          path: snapshot/
+          if-no-files-found: ignore
+
+      - name: FTTR 运行时门禁（设备树有没有给驱动要的 GPIO 线）
+        if: ${{ !inputs.preflight_only && inputs.with_fttr }}
+        run: bash "$GITHUB_WORKSPACE/scripts/check_fttr_dts.sh"
+        env:
+          BUILD_DIR: ${{ github.workspace }}/engine/action_build
+
+  release:
+    needs: build
+    if: ${{ !inputs.preflight_only }}
+    name: 发布
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 取产物
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.asset_prefix }}
+          path: dl
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: hm2004-du-${{ needs.build.outputs.date }}
+          name: ${{ needs.build.outputs.release_title }}
+          body: |
+            目标设备：H3C HM2004-DU（Airoha AN7581，profile h3c_hm2004-du）
+            源码与配置快照见资产里的 pins.env / config.seed / overlay.diff。
+
+            构建：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          files: |
+            dl/firmware/*
+            dl/SHA256SUMS.txt

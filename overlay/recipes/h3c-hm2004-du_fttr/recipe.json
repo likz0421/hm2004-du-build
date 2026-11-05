@@ -1,0 +1,33 @@
+{
+  "$schema": "../recipe.schema.json",
+  "name": "h3c-hm2004-du_fttr",
+  "description": "把公开源的 fttr-fmcs 改成可独立编译的 out-of-tree 模块（原包要求内核 Kconfig 里有 FTTR_FMCS 符号，而那个 Kconfig 从没接进内核树）",
+  "enabled": false,
+  "priority": 0,
+  "phase": "post_feeds_install",
+  "depends": [],
+  "conflicts": [],
+  "tags": [
+    "fttr",
+    "h3c",
+    "hm2004-du"
+  ],
+  "when": {
+    "targets": [
+      "lk_h3c_hm2004_du"
+    ],
+    "repo": [],
+    "branch": [],
+    "tags": []
+  },
+  "actions": {
+    "addFeeds": [],
+    "removeFeeds": [],
+    "importPackages": [],
+    "removePackageDirs": [],
+    "patches": [],
+    "files": [],
+    "configs": [],
+    "script": "apply.sh"
+  }
+}

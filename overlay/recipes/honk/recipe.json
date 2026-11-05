@@ -1,0 +1,35 @@
+{
+  "$schema": "../recipe.schema.json",
+  "name": "honk",
+  "description": "锁定版本引入 kenzok8/openwrt-honk feed（honk eBPF 核心 + luci-app-honk）",
+  "enabled": false,
+  "priority": 0,
+  "phase": "pre_feeds",
+  "depends": [],
+  "conflicts": [],
+  "tags": [
+    "ebpf",
+    "proxy",
+    "luci"
+  ],
+  "when": {
+    "targets": [
+      "lk_h3c_hm2004_du"
+    ],
+    "repo": [],
+    "branch": [],
+    "tags": []
+  },
+  "actions": {
+    "addFeeds": [
+      "src-git honk @HONK_FEED_URL@.git^@HONK_SHA@"
+    ],
+    "removeFeeds": [],
+    "importPackages": [],
+    "removePackageDirs": [],
+    "patches": [],
+    "files": [],
+    "configs": [],
+    "script": null
+  }
+}

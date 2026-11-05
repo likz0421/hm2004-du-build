@@ -1,0 +1,39 @@
+{
+  "$schema": "../recipe.schema.json",
+  "name": "ebpf_btf",
+  "description": "把 honk 需要的裸内核符号补进 airoha/an7581 的子 target 内核配置（OpenWrt 没有对应 CONFIG_KERNEL_* 项的那一批）",
+  "enabled": false,
+  "priority": 0,
+  "phase": "post_clone",
+  "depends": [],
+  "conflicts": [],
+  "tags": [
+    "ebpf",
+    "btf",
+    "an7581"
+  ],
+  "when": {
+    "targets": [
+      "lk_h3c_hm2004_du"
+    ],
+    "repo": [],
+    "branch": [],
+    "tags": []
+  },
+  "actions": {
+    "addFeeds": [],
+    "removeFeeds": [],
+    "importPackages": [],
+    "removePackageDirs": [],
+    "patches": [],
+    "files": [
+      {
+        "source": "files/airoha_an7581_ebpf.config",
+        "target": "target/linux/airoha/an7581/config-6.18",
+        "append": true
+      }
+    ],
+    "configs": [],
+    "script": null
+  }
+}

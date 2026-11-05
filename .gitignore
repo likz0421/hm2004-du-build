@@ -1,0 +1,14 @@
+# 构建过程产物，不入库
+engine/
+action_build/
+release/
+snapshot/
+firmware/
+overlay.diff
+build.log
+kmod-list.txt
+config-snapshot/
+
+# 本地临时
+*.tmp
+.DS_Store

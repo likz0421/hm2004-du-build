@@ -1,0 +1,35 @@
+{
+  "$schema": "../recipe.schema.json",
+  "name": "hm2004_fttr_feed",
+  "description": "锁定版本引入 rayniel/openwrt-hm2004-feed（FTTR 驱动/工具/位流/LuCI 的公开源）",
+  "enabled": false,
+  "priority": 0,
+  "phase": "pre_feeds",
+  "depends": [],
+  "conflicts": [],
+  "tags": [
+    "fttr",
+    "h3c",
+    "hm2004-du"
+  ],
+  "when": {
+    "targets": [
+      "lk_h3c_hm2004_du"
+    ],
+    "repo": [],
+    "branch": [],
+    "tags": []
+  },
+  "actions": {
+    "addFeeds": [
+      "src-git hm2004 @FTTR_FEED_URL@.git^@FTTR_SHA@"
+    ],
+    "removeFeeds": [],
+    "importPackages": [],
+    "removePackageDirs": [],
+    "patches": [],
+    "files": [],
+    "configs": [],
+    "script": null
+  }
+}
