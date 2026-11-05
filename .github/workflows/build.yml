@@ -46,6 +46,7 @@ jobs:
     timeout-minutes: 420
     outputs:
       date: ${{ steps.vars.outputs.DATE }}
+      variant: ${{ steps.vars.outputs.VARIANT }}
       asset_prefix: ${{ steps.vars.outputs.ASSET_PREFIX }}
       release_title: ${{ steps.vars.outputs.RELEASE_TITLE }}
 
@@ -73,11 +74,28 @@ jobs:
 
       - name: 计算输出名与日期
         id: vars
+        env:
+          WITH_FTTR: ${{ inputs.with_fttr }}
         run: |
           d=$(TZ=Asia/Shanghai date +%Y%m%d)
+          # 两种变体可能在同一天各出一个 Release，名字和 tag 都必须带变体标记，
+          # 否则第二个会撞上第一个的 tag。
+          if [ "$WITH_FTTR" = "true" ]; then
+            vtag=fttr
+            vname=FTTR
+          else
+            vtag=noflavor
+            vname=""
+          fi
           echo "DATE=$d" >>"$GITHUB_OUTPUT"
-          echo "ASSET_PREFIX=HM2004-DU-wrtRelease-FTTR-eBPF-HONK-stable-$d" >>"$GITHUB_OUTPUT"
-          echo "RELEASE_TITLE=HM2004-DU-wrtRelease-FTTR-eBPF-HONK-稳定版_$d" >>"$GITHUB_OUTPUT"
+          echo "VARIANT=$vtag" >>"$GITHUB_OUTPUT"
+          echo "ASSET_PREFIX=HM2004-DU-wrtRelease-${vname:+${vname}-}eBPF-HONK-stable-$d" >>"$GITHUB_OUTPUT"
+          if [ -n "$vname" ]; then
+            echo "RELEASE_TITLE=HM2004-DU-wrtRelease-FTTR-eBPF-HONK-稳定版_$d" >>"$GITHUB_OUTPUT"
+          else
+            # 不含 FTTR 就不把 FTTR 写进名字里，别拿名字宣称没有的东西。
+            echo "RELEASE_TITLE=HM2004-DU-wrtRelease-eBPF-HONK-稳定版_$d" >>"$GITHUB_OUTPUT"
+          fi
 
       - name: 校验 pins.env 里的上游提交真实存在
         run: |
@@ -210,7 +228,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: config-snapshot-${{ steps.vars.outputs.DATE }}
+          name: config-snapshot-${{ steps.vars.outputs.DATE }}-${{ steps.vars.outputs.VARIANT }}
           path: snapshot/
           if-no-files-found: ignore
 
@@ -235,7 +253,7 @@ jobs:
       - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: hm2004-du-${{ needs.build.outputs.date }}
+          tag_name: hm2004-du-${{ needs.build.outputs.date }}-${{ needs.build.outputs.variant }}
           name: ${{ needs.build.outputs.release_title }}
           body: |
             目标设备：H3C HM2004-DU（Airoha AN7581，profile h3c_hm2004-du）
