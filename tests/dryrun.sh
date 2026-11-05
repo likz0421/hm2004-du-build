@@ -163,6 +163,7 @@ EOF
 CONFIG_TARGET_airoha=y
 CONFIG_TARGET_airoha_an7581=y
 CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_h3c_hm2004-du=y
+CONFIG_TARGET_ROOTFS_INITRAMFS=y
 CONFIG_KERNEL_DEBUG_INFO=y
 # CONFIG_KERNEL_DEBUG_INFO_REDUCED is not set
 CONFIG_KERNEL_DEBUG_INFO_BTF=y
@@ -310,11 +311,16 @@ make_pins "$WORK/pins1.env" "$E1SHA" 0000000000000000000000000000000000000000
 run_expect pass "带 fttr 的覆盖" "" \
     env PINS="$WORK/pins1.env" ENGINE_DIR="$E1" WITH_FTTR=1 bash "$REPO_DIR/scripts/apply_overlay.sh"
 
+INI1="$E1/wrt_core/compilecfg/lk_h3c_hm2004_du.ini"
+add1=$(awk -F= '$1=="ADD_RECIPES"{print $2}' "$INI1")
+dis1=$(awk -F= '$1=="DISABLE_RECIPES"{print $2}' "$INI1")
 if grep -q "src-git honk" "$E1/wrt_core/recipes/honk/recipe.json" &&
-    grep -q "^COMMIT_HASH=" "$E1/wrt_core/compilecfg/lk_h3c_hm2004_du.ini" &&
+    grep -q "^COMMIT_HASH=" "$INI1" &&
     ! grep -q "openwrt-fttr" "$E1/wrt_core/recipes/h3c-hm2004-du_fttr/recipe.json" &&
-    [ ! -f "$E1/wrt_core/recipes/h3c-hm2004-du_fttr/configs/stale.config" ]; then
-    say "√ [旧 recipe 目录被清掉、私有源引用被替换、ini 带上了 COMMIT_HASH]"
+    [ ! -f "$E1/wrt_core/recipes/h3c-hm2004-du_fttr/configs/stale.config" ] &&
+    ! printf '%s' "$add1" | tr ',' '\n' | grep -qx disable_initramfs &&
+    printf '%s' "$dis1" | tr ',' '\n' | grep -qx disable_initramfs; then
+    say "√ [旧 recipe 目录被清掉、私有源引用被替换、ini 带上了 COMMIT_HASH、disable_initramfs 归到 DISABLE]"
     pass=$((pass + 1))
 else
     say "× [overlay 结果不符合预期]"
@@ -391,6 +397,11 @@ mv "$B/private-key.pem.bak" "$B/private-key.pem"
 printf '  KCONFIG:=CONFIG_FTTR_FMCS=m\n' >>"$B/package/feeds/hm2004/fttr-fmcs/Makefile"
 run_expect fail "apply.sh 没生效要拦" ".ko 编不出来" prebuild
 sed -i '/KCONFIG:=CONFIG_FTTR_FMCS/d' "$B/package/feeds/hm2004/fttr-fmcs/Makefile"
+
+# recipe 在 pre_defconfig 之后把 INITRAMFS 写成 n —— recovery.itb 就不会产出
+sed -i 's/^CONFIG_TARGET_ROOTFS_INITRAMFS=y$/CONFIG_TARGET_ROOTFS_INITRAMFS=n/' "$B/.config"
+run_expect fail "INITRAMFS 被 recipe 改掉要拦" "recovery.itb 不会产出" prebuild
+sed -i 's/^CONFIG_TARGET_ROOTFS_INITRAMFS=n$/CONFIG_TARGET_ROOTFS_INITRAMFS=y/' "$B/.config"
 
 sed -i '/^obj-m := fttr-fmcs\.o$/d' "$B/feeds/hm2004/original/driver/Makefile"
 run_expect fail "驱动缺 obj-m 要拦" "obj-m 行" prebuild

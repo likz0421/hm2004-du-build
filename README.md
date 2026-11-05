@@ -247,9 +247,16 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
    * `moltd` / Rust 版控制器（ACS、MQTT、HL202 等分支）公开无处可取，只有 miniolt 一个命令行。
    * 位流是原厂提取的二进制，feed 与作者研究库都写明「未确认可以再分发」。往公开 Release
      里发镜像前，这一条得你自己判断。
-2. **`factory.bin` 不存在。** 该 profile 的镜像定义只有 `IMAGES := sysupgrade.itb`，
-   另有 `KERNEL_INITRAMFS_SUFFIX := -recovery.itb`。救砖走 recovery + U-Boot/UBI 那条路，
-   不是 TFTP 全镜像。文档这条要求在上游没有对应物。
+2. **`factory.bin` 不存在，能拿到的是 `recovery.itb`。** 该 profile 的镜像定义只有
+   `IMAGES := sysupgrade.itb`，救砖走 `KERNEL_INITRAMFS_SUFFIX := -recovery.itb` + U-Boot/UBI
+   那条路，不是 TFTP 全镜像——文档这条要求在上游没有对应物。
+   要产出它必须打开 `CONFIG_TARGET_ROOTFS_INITRAMFS=y`，而这件事踩了一个隐蔽的坑：
+   上游 ini 的 `ADD_RECIPES` 里有 `disable_initramfs`，它在 `pre_defconfig` 阶段往 `.config`
+   **追加** `CONFIG_TARGET_ROOTFS_INITRAMFS=n`，写得比设备配置和片段都晚，于是 `=y` 被无声顶掉、
+   `recovery.itb` 不产出（实测构建 42116233200 就是这样，两小时后才由产物核验发现）。
+   现在 ini 把它移到 `DISABLE_RECIPES`（引擎里 DISABLE 的优先级高于 ADD 与 recipe 集合），
+   并且 `assert_prebuild.sh` 直接核对最终值，20 分钟内就会报错，而不是等两小时。
+   代价：多编一个 initramfs 镜像、多几分钟到十几分钟；`sysupgrade.itb` 内容不受影响。
 3. **默认 `with_fttr=true` 会让构建红。** 这是刻意的：文档要求「fttr 插件可用」，而现在它做不到，
    红比绿了但功能不在更诚实。想要能刷的固件就 `with_fttr=false`，PON + FTTR 之外的部分照旧。
 

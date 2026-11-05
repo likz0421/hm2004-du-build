@@ -74,6 +74,16 @@ need_cfg_y "$CFG" "TARGET_airoha"
 need_cfg_y "$CFG" "TARGET_airoha_an7581"
 need_cfg_y "$CFG" "TARGET_DEVICE_airoha_an7581_DEVICE_h3c_hm2004-du"
 
+# 救砖镜像的开关。这个符号会被 pre_defconfig 阶段的 recipe 后写覆盖
+# （disable_initramfs 就是干这个的），所以必须在这里核对最终值，
+# 而不是等两小时后由 assert_artifacts 发现没有 recovery.itb。
+if grep -qE '^CONFIG_TARGET_ROOTFS_INITRAMFS=n$' "$CFG"; then
+    missing+=("TARGET_ROOTFS_INITRAMFS 被写成 =n：某个 pre_defconfig 阶段的 recipe 覆盖了设备配置，-recovery.itb 不会产出。检查 ini 的 ADD_RECIPES/DISABLE_RECIPES（现值：$(grep -E '^CONFIG_TARGET_ROOTFS_INITRAMFS' "$CFG" | head -1))")
+    fail=1
+else
+    need_cfg_y "$CFG" "TARGET_ROOTFS_INITRAMFS"
+fi
+
 # --- 3. BTF 三件套（需求文档「二、内核必选配置」的真正卡点）---
 need_cfg_y "$CFG" "KERNEL_DEBUG_INFO"
 need_cfg_absent_y "$CFG" "KERNEL_DEBUG_INFO_REDUCED"
