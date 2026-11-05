@@ -62,10 +62,9 @@ else
     ok "sysupgrade 镜像：$(basename "$sysupgrade")（$(wc -c <"$sysupgrade") 字节）"
 fi
 if [ -z "$recovery" ]; then
-    echo "! 没找到 recovery.itb（救砖用的 initramfs）。需求文档要的 factory.bin 在" >&2
-    echo "! 这个 profile 的上游定义里就不存在：target/linux/airoha/image/an7581.mk 的" >&2
-    echo "! Device/h3c_hm2004-du 只声明 IMAGES := sysupgrade.itb，救砖走的是" >&2
-    echo "! KERNEL_INITRAMFS_SUFFIX := -recovery.itb 那条路，不是 factory 全镜像。" >&2
+    # 设备配置里已打开 CONFIG_TARGET_ROOTFS_INITRAMFS=y，产出 -recovery.itb 是
+    # 需求文档「救砖固件」这一条的实际落点；没出来就是真缺东西，不能只警告。
+    bad "没有 recovery.itb：CONFIG_TARGET_ROOTFS_INITRAMFS=y 应当产出 KERNEL_INITRAMFS_SUFFIX=-recovery.itb 的救砖镜像。firmware/ 实际内容：$(find "$FW_DIR" -maxdepth 1 -type f | sort | tr '\n' ' ')"
 else
     ok "recovery 镜像：$(basename "$recovery")（$(wc -c <"$recovery") 字节）"
 fi
@@ -146,13 +145,18 @@ if [ -n "$manifest" ]; then
 fi
 
 # --- 5. 编译配置快照（需求文档「四、4 输出 config.seed 快照」）---
-for f in "$BUILD_DIR/.config" "$BUILD_DIR/config.buildinfo"; do
-    if [ -f "$f" ]; then
-        ok "快照可用：$(basename "$f")（$(wc -l <"$f") 行）"
-    else
-        bad "缺少配置快照：$f"
-    fi
-done
+if [ -f "$BUILD_DIR/.config" ]; then
+    ok "config.seed 可用：$(wc -l <"$BUILD_DIR/.config") 行"
+else
+    bad "缺少 $BUILD_DIR/.config"
+fi
+# config.buildinfo 是发布物之一，落在 bin/targets 里，不在源码树根上。
+buildinfo=$(find "$BUILD_DIR/bin/targets" -maxdepth 3 -type f -name config.buildinfo 2>/dev/null | head -1)
+if [ -n "$buildinfo" ]; then
+    ok "config.buildinfo 可用：$(basename "$(dirname "$buildinfo")")/config.buildinfo"
+else
+    bad "在 bin/targets 下找不到 config.buildinfo（实际搜过的根：$BUILD_DIR/bin/targets）"
+fi
 
 if [ "$fail" -ne 0 ]; then
     echo "=============== 产物核验未通过 ==============="

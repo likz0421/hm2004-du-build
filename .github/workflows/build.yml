@@ -172,18 +172,8 @@ jobs:
           ADD_CONFIG_FRAGMENTS: ${{ inputs.extra_fragments }}
         run: ./build.sh "$BUILD_TARGET" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
-      - name: 产物核验（认证物，不信日志）
-        if: ${{ !inputs.preflight_only }}
-        run: bash "$GITHUB_WORKSPACE/scripts/assert_artifacts.sh"
-        env:
-          PINS: ${{ github.workspace }}/pins.env
-          ENGINE_DIR: ${{ github.workspace }}/engine
-          BUILD_DIR: ${{ github.workspace }}/engine/action_build
-          FW_DIR: ${{ github.workspace }}/engine/firmware
-          WITH_FTTR: ${{ inputs.with_fttr && '1' || '0' }}
-
       - name: 收集产物
-        if: ${{ !inputs.preflight_only && always() }}
+        if: always()
         run: |
           set -eu
           out="$GITHUB_WORKSPACE/release"
@@ -192,10 +182,18 @@ jobs:
             cp -f "$ENGINE_DIR"/firmware/* "$out/firmware/" 2>/dev/null || true
           fi
           cp "$ENGINE_DIR/action_build/.config" "$out/config.seed" 2>/dev/null || true
-          cp "$ENGINE_DIR/action_build/config.buildinfo" "$out/" 2>/dev/null || true
+          # config.buildinfo 不在源码树根上，在输出目录里（OpenWrt 把它当产物发布）。
+          bi=$(find "$ENGINE_DIR/action_build/bin/targets" -maxdepth 3 -type f -name config.buildinfo 2>/dev/null | head -1)
+          if [ -n "$bi" ]; then
+            cp "$bi" "$out/config.buildinfo"
+            echo "配置快照：$bi"
+          else
+            echo "! bin/targets 下没找到 config.buildinfo，快照缺这一项" >&2
+          fi
           cp "$GITHUB_WORKSPACE/overlay.diff" "$out/" 2>/dev/null || true
           cp "$GITHUB_WORKSPACE/build.log" "$out/" 2>/dev/null || true
           cp "$GITHUB_WORKSPACE/pins.env" "$out/"
+          cp "$GITHUB_WORKSPACE/pins.feeds" "$out/"
 
           # kmod 包单独打包：刷机后想补驱动不用再重编整份固件。
           if [ -d "$ENGINE_DIR/action_build/bin" ]; then
@@ -210,19 +208,30 @@ jobs:
             fi
           fi
 
-          if [ -d "$out/firmware" ]; then
+          if [ -n "$(ls -A "$out/firmware" 2>/dev/null)" ]; then
             (cd "$out/firmware" && sha256sum * >"$out/SHA256SUMS.txt" 2>/dev/null || true)
           fi
           ls -l "$out" "$out/firmware" 2>/dev/null || true
 
       - name: 上传构建产物
-        if: ${{ !inputs.preflight_only }}
+        # 必须赶在任何门禁之前：三小时的镜像不能因为一道检查红掉就跟着 runner 一起消失。
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.vars.outputs.ASSET_PREFIX }}
           path: release/
           if-no-files-found: error
           retention-days: 30
+
+      - name: 产物核验（认证物，不信日志）
+        if: ${{ !inputs.preflight_only }}
+        run: bash "$GITHUB_WORKSPACE/scripts/assert_artifacts.sh"
+        env:
+          PINS: ${{ github.workspace }}/pins.env
+          ENGINE_DIR: ${{ github.workspace }}/engine
+          BUILD_DIR: ${{ github.workspace }}/engine/action_build
+          FW_DIR: ${{ github.workspace }}/engine/firmware
+          WITH_FTTR: ${{ inputs.with_fttr && '1' || '0' }}
 
       - name: 上传配置快照
         if: ${{ always() }}

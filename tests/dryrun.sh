@@ -186,7 +186,7 @@ CONFIG_SIGNED_PACKAGES=y
 CONFIG_SIGN_FIRMWARE=y
 EOF
     printf 'binary\n' >"$dir/private-key.pem"
-    printf '# snapshot\n' >"$dir/config.buildinfo"
+    printf '# snapshot\n' >"$dir/bin/targets/airoha/an7581/config.buildinfo"
 
     cat >"$kdir/.config" <<'EOF'
 CONFIG_BPF=y
@@ -419,6 +419,14 @@ run_expect pass "产物全绿" "" artifacts
 rm -f "$FW"/*sysupgrade.itb
 run_expect fail "缺 sysupgrade 要拦" "sysupgrade.itb" artifacts
 printf 'x\n' >"$FW/ponwrt-airoha-an7581-h3c_hm2004-du-sysupgrade.itb"
+
+rm -f "$FW"/*recovery.itb
+run_expect fail "缺 recovery 救砖镜像要拦" "recovery.itb" artifacts
+printf 'x\n' >"$FW/ponwrt-airoha-an7581-h3c_hm2004-du-initramfs-recovery.itb"
+
+rm -f "$B/bin/targets/airoha/an7581/config.buildinfo"
+run_expect fail "缺 config.buildinfo 要拦" "config.buildinfo" artifacts
+printf '# snapshot\n' >"$B/bin/targets/airoha/an7581/config.buildinfo"
 
 sed -i '/CONFIG_DEBUG_INFO_BTF=y/d' "$B/$KERNEL_DIR_REL/.config"
 run_expect fail "内核实际没开 BTF 要拦" "DEBUG_INFO_BTF" artifacts
