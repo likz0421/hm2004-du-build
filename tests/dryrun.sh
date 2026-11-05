@@ -136,6 +136,22 @@ EOF
 EOF
     : >"$dir/feeds/hm2004/original/driver/fmcs.c"
 
+    # apply.sh 处理后的形态（没有 KCONFIG 行、驱动是 obj-m）
+    mkdir -p "$dir/package/feeds/hm2004/fttr-fmcs"
+    cat >"$dir/package/feeds/hm2004/fttr-fmcs/Makefile" <<'EOF'
+define KernelPackage/fttr-fmcs
+  FILES:=$(PKG_BUILD_DIR)/fttr-fmcs.ko
+endef
+EOF
+    cat >"$dir/feeds/hm2004/original/driver/Makefile" <<'EOF'
+obj-$(CONFIG_FTTR_FMCS)		+= fttr-fmcs.o
+fttr-fmcs-y			:= fmcs.o fmcs_spi.o fmcs_load.o
+
+# hm2004-du-build out-of-tree fix
+obj-m := fttr-fmcs.o
+ccflags-y += -DCONFIG_FTTR_FMCS_LOAD_AT_PROBE=1
+EOF
+
     cat >"$dir/.config" <<'EOF'
 CONFIG_TARGET_airoha=y
 CONFIG_TARGET_airoha_an7581=y
@@ -364,6 +380,20 @@ sed -i 's|^src-git luci https://github.com/immortalwrt/luci.git$|src-git luci ht
 mv "$B/private-key.pem" "$B/private-key.pem.bak"
 run_expect fail "缺签名私钥要拦" "APK_SIGNING_PRIVATE_KEY" prebuild
 mv "$B/private-key.pem.bak" "$B/private-key.pem"
+
+printf '  KCONFIG:=CONFIG_FTTR_FMCS=m\n' >>"$B/package/feeds/hm2004/fttr-fmcs/Makefile"
+run_expect fail "apply.sh 没生效要拦" ".ko 编不出来" prebuild
+sed -i '/KCONFIG:=CONFIG_FTTR_FMCS/d' "$B/package/feeds/hm2004/fttr-fmcs/Makefile"
+
+sed -i '/^obj-m := fttr-fmcs\.o$/d' "$B/feeds/hm2004/original/driver/Makefile"
+run_expect fail "驱动缺 obj-m 要拦" "obj-m 行" prebuild
+echo "obj-m := fttr-fmcs.o" >>"$B/feeds/hm2004/original/driver/Makefile"
+
+sed -i '/CONFIG_FTTR_FMCS_LOAD_AT_PROBE=1/d' "$B/feeds/hm2004/original/driver/Makefile"
+run_expect fail "驱动缺位流加载宏要拦" "LOAD_AT_PROBE" prebuild
+echo "ccflags-y += -DCONFIG_FTTR_FMCS_LOAD_AT_PROBE=1" >>"$B/feeds/hm2004/original/driver/Makefile"
+
+run_expect pass "补回之后重新全绿" "" prebuild
 
 commit_here "$B" drift --allow-empty
 run_expect fail "源码 HEAD 漂了要拦" "不一致" prebuild

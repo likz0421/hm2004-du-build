@@ -129,6 +129,33 @@ if [ "$WITH_FTTR" = "1" ]; then
         PACKAGE_luci-app-h3c-fttr; do
         need_cfg_y "$CFG" "$p"
     done
+
+    # out-of-tree 修正真的落到 feeds install 之后的文件上了吗？
+    # 没落上的话 fttr-fmcs.ko 根本不会生成，会白烧几十分钟内核编译才发现。
+    fttr_pkg="$BUILD_DIR/package/feeds/hm2004/fttr-fmcs/Makefile"
+    fttr_drv="$BUILD_DIR/feeds/hm2004/original/driver/Makefile"
+    for f in "$fttr_pkg" "$fttr_drv"; do
+        if [ ! -f "$f" ]; then
+            missing+=("FTTR 包没装进源码树：$f（feed 装了但包没 install？）")
+            fail=1
+        fi
+    done
+    if [ -f "$fttr_pkg" ]; then
+        if grep -q '^[[:space:]]*KCONFIG:=CONFIG_FTTR_FMCS' "$fttr_pkg"; then
+            missing+=("apply.sh 没起作用：$fttr_pkg 里 KCONFIG:=CONFIG_FTTR_FMCS 还在，内核 .config 里不会有这个符号，.ko 编不出来")
+            fail=1
+        fi
+    fi
+    if [ -f "$fttr_drv" ]; then
+        if ! grep -q '^obj-m := fttr-fmcs\.o$' "$fttr_drv"; then
+            missing+=("驱动 Makefile 缺 obj-m 行：$fttr_drv")
+            fail=1
+        fi
+        if ! grep -q 'CONFIG_FTTR_FMCS_LOAD_AT_PROBE=1' "$fttr_drv"; then
+            missing+=("驱动 Makefile 缺 -DCONFIG_FTTR_FMCS_LOAD_AT_PROBE=1，fmcs.c 的位流加载分支会被编译掉")
+            fail=1
+        fi
+    fi
 fi
 
 # --- 8. apk 打包与签名（产物要能被设备上的 apk 信任，密钥必须来自 Secrets）---
