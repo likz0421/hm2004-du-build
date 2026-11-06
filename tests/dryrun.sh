@@ -751,10 +751,40 @@ rm -rf "$RG/etc/apk/keys"
 run_expect fail "apk 公钥没进镜像要拦" "/etc/apk/keys" check_rootfs
 mkdir -p "$RG/etc/apk/keys"; : >"$RG/etc/apk/keys/hm2004.pub"
 
-# 没有 unsquashfs 又没交 ROOTFS_DIR 时，必须拒绝执行而不是当成通过
-run_expect fail "缺 unsquashfs 时不许静默通过" "没给 ROOTFS_DIR" \
-    env FW_DIR="$WORK/rf_fw" PATH=/usr/bin:/bin IMAGE_PROFILE=h3c_hm2004-du \
-    PINS="$WORK/pins4.env" bash "$REPO_DIR/scripts/assert_rootfs.sh"
+# 没有可判的东西时，必须拒绝执行或明确失败，绝不能"没检查就当通过"。
+# 两条分支取决于有没有 unsquashfs（CI 装了 squashfs-tools，本机没有）：
+# 这里各造一次，两条都钉住，而不是换台机器就靠运气。
+stub_sq=$WORK/stub_sq; mkdir -p "$stub_sq"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$stub_sq/unsquashfs"; chmod +x "$stub_sq/unsquashfs"
+for scenario in no_tool with_tool; do
+    out_nocarve=$(mktemp)
+    if [ "$scenario" = "with_tool" ]; then p="$stub_sq:/usr/bin:/bin"; else p=/usr/bin:/bin; fi
+    env FW_DIR="$WORK/rf_fw" PATH="$p" IMAGE_PROFILE=h3c_hm2004-du \
+        PINS="$WORK/pins4.env" bash "$REPO_DIR/scripts/assert_rootfs.sh" >"$out_nocarve" 2>&1
+    rc_nocarve=$?
+    if [ "$scenario" = "with_tool" ]; then
+        if ! grep -qE "找不到 sysupgrade 镜像" "$out_nocarve"; then
+            say "× [有 unsquashfs 但没镜像时，没说清原因：$(head -2 "$out_nocarve" | tr '\n' ' ')]"
+            failed=$((failed + 1))
+        else
+            say "√ [有 unsquashfs、无镜像 → 明确失败]"
+            pass=$((pass + 1))
+        fi
+    else
+        if ! grep -qE "没给 ROOTFS_DIR" "$out_nocarve"; then
+            say "× [缺 unsquashfs 时，没说清原因：$(head -2 "$out_nocarve" | tr '\n' ' ')]"
+            failed=$((failed + 1))
+        else
+            say "√ [缺 unsquashfs 且没交 ROOTFS_DIR → 拒绝执行]"
+            pass=$((pass + 1))
+        fi
+    fi
+    if [ "$rc_nocarve" -eq 0 ]; then
+        say "× [$scenario 没有任何可判对象时竟然通过了 —— 这道门禁会假绿]"
+        failed=$((failed + 1))
+    fi
+    rm -f "$out_nocarve"
+done
 
 say "======================================"
 say "通过 $pass 项，失败 $failed 项"
