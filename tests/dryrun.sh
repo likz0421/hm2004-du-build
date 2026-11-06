@@ -812,6 +812,89 @@ else
 fi
 rm -f "$out_b"
 
+# 新加的偏移选择逻辑：镜像里 hsqs 可能偶然出现在压缩数据中，必须逐个验超级块。
+# 用会真做校验的 unsquashfs 桩来测：只有带 VALIDSB 标记的那块才算合法超级块。
+SQV=$WORK/stub_verify; mkdir -p "$SQV"
+cat >"$SQV/unsquashfs" <<'EOF'
+#!/usr/bin/env bash
+# 用法兼容：-s <file>（验超级块）与 -d <dir> <file>（解包）
+target=""
+mode=""
+prev=""
+for a in "$@"; do
+    case "$a" in
+        -s) mode=check ;;
+        -d) mode=extract ;;
+        *)  if [ "$prev" = "-d" ]; then dir=$a; fi; target=$a ;;
+    esac
+    prev=$a
+done
+[ -f "$target" ] || exit 2
+if [ "$mode" = "check" ]; then
+    grep -q VALIDSB "$target" && exit 0
+    exit 1
+fi
+mkdir -p "$dir/etc/apk/keys" "$dir/www/luci-static/vantage/luci" \
+    "$dir/etc/uci-defaults" "$dir/lib/modules/6.18.55" \
+    "$dir/usr/lib/lua/luci/i18n"
+: > "$dir/www/luci-static/vantage/luci.js"
+: > "$dir/etc/uci-defaults/30_luci-theme-vantage"
+: > "$dir/usr/lib/lua/luci/i18n/vantage-theme.zh-cn.lmo"
+: > "$dir/lib/modules/6.18.55/cls_bpf.ko"
+: > "$dir/lib/modules/6.18.55/act_bpf.ko"
+: > "$dir/etc/apk/keys/hm2004.pub"
+exit 0
+EOF
+chmod +x "$SQV/unsquashfs"
+
+# 造一个假镜像：先一大块假的 hsqs（模拟压缩数据里偶然出现，长度必须超过
+# 4096 的探测窗口，否则探针会把后面的合法块一起读进来），再一个合法超级块
+FAKEFW=$WORK/fake_fw; mkdir -p "$FAKEFW"
+node -e '
+const fs=require("fs");
+const junk=Buffer.concat([Buffer.from("hsqs"), Buffer.alloc(8000, 0x41)]);        // 假命中
+const good=Buffer.concat([Buffer.from("hsqs"), Buffer.from("VALIDSB"), Buffer.alloc(8000, 0x42)]);
+fs.writeFileSync(process.argv[1], Buffer.concat([junk, good]));
+' "$FAKEFW/ponwrt-airoha-an7581-h3c_hm2004-du-squashfs-sysupgrade.itb"
+
+out_d=$(mktemp)
+env FW_DIR="$FAKEFW" PATH="$SQV:/usr/bin:/bin" IMAGE_PROFILE=h3c_hm2004-du \
+    PINS="$WORK/pins4.env" bash "$REPO_DIR/scripts/assert_rootfs.sh" >"$out_d" 2>&1
+rc_d=$?
+if [ "$rc_d" -eq 0 ] && grep -q "超级块已验证" "$out_d"; then
+    off_line=$(grep -o "从偏移 [0-9]* " "$out_d" | head -1)
+    if [ "$off_line" = "从偏移 8004 " ]; then
+        say "√ [跳过假的 hsqs，选中真正合法的超级块（$off_line）]"
+        pass=$((pass + 1))
+    else
+        say "× [偏移选错了：$off_line（应为 8004，即第二个 hsqs）]"
+        failed=$((failed + 1))
+    fi
+else
+    say "× [带校验的抠取流程失败 rc=$rc_d：$(head -3 "$out_d" | tr '\n' ' ')]"
+    failed=$((failed + 1))
+fi
+rm -f "$out_d"
+
+# 反过来：整份镜像里没有合法超级块时，必须点名"验不过"，不能随便挑一个偏移硬解
+node -e '
+const fs=require("fs");
+const junk=Buffer.concat([Buffer.from("hsqs"), Buffer.alloc(600, 0x41)]);
+fs.writeFileSync(process.argv[1], Buffer.concat([junk, junk]));
+' "$FAKEFW/ponwrt-airoha-an7581-h3c_hm2004-du-squashfs-sysupgrade.itb"
+out_e=$(mktemp)
+env FW_DIR="$FAKEFW" PATH="$SQV:/usr/bin:/bin" IMAGE_PROFILE=h3c_hm2004-du \
+    PINS="$WORK/pins4.env" bash "$REPO_DIR/scripts/assert_rootfs.sh" >"$out_e" 2>&1
+rc_e=$?
+if [ "$rc_e" -ne 0 ] && grep -q "没有一个能当 squashfs 超级块" "$out_e"; then
+    say "√ [全都不是合法超级块 → 明确拒绝，不硬解]"
+    pass=$((pass + 1))
+else
+    say "× [期望拒绝硬解，实际 rc=$rc_e：$(head -3 "$out_e" | tr '\n' ' ')]"
+    failed=$((failed + 1))
+fi
+rm -f "$out_e"
+# 有工具就不该误报这条，所以按实际环境判定，不写死期望。
 # 只有真的没有 unsquashfs 时，才谈得上「缺工具就拒绝执行」这条分支；
 # 有工具就不该误报这条，所以按实际环境判定，不写死期望。
 if ! PATH=/usr/bin:/bin command -v unsquashfs >/dev/null 2>&1; then

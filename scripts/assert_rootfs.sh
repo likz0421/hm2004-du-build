@@ -43,17 +43,31 @@ if [ -z "$img" ]; then
     exit 1
 fi
 
-off=$(grep -abom1 'hsqs' "$img" | cut -d: -f1 || true)
+work=$(mktemp -d)
+cleanup() { rm -rf "$work"; }
+trap cleanup EXIT
+
+# hsqs 这四个字节可能在压缩数据里偶然出现，所以不能赌第一个命中：
+# 逐个偏移抠出来用 unsquashfs -s 验超级块，验过才算。
+cand=$(grep -abo 'hsqs' "$img" | cut -d: -f1 | head -8)
+if [ -z "$cand" ]; then
+    bad "在 $(basename "$img") 里找不到 squashfs 魔数 hsqs，镜像结构与预期不符（不是 squashfs rootfs？）"
+fi
+off=""
+for o in $cand; do
+    dd if="$img" of="$work/probe.squashfs" bs=1 skip="$o" count=4096 status=none 2>/dev/null
+    if unsquashfs -s "$work/probe.squashfs" >/dev/null 2>&1; then
+        off=$o
+        break
+    fi
+done
 if [ -z "$off" ]; then
-    bad "在 $(basename "$img") 里找不到 squashfs 魔数 hsqs，说明镜像结构和预期不符（不是 squashfs rootfs？）"
+    bad "试了 $(printf '%s\n' $cand | wc -l) 个 hsqs 偏移，没有一个能当 squashfs 超级块用（第一个在 $(printf '%s\n' $cand | head -1)）"
     echo "=============== rootfs 内容核验未通过 ==============="
     for p in "${problems[@]}"; do echo "× $p"; done
     exit 1
 fi
-
-work=$(mktemp -d)
-cleanup() { rm -rf "$work"; }
-trap cleanup EXIT
+echo "==> 从偏移 $off 抠出 squashfs（超级块已验证）"
 dd if="$img" of="$work/rootfs.squashfs" bs=1 skip="$off" status=none
 if [ ! -s "$work/rootfs.squashfs" ]; then
     bad "从偏移 $off 抠出来的 squashfs 是空的"
