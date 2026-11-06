@@ -651,6 +651,121 @@ fi
 rm -f "$out3"
 
 say
+say "### 场景 4b：check_official_fttr.sh（官方 FTTR 到底缺什么）"
+# 这道闸判的是「上游到底有什么」，所以必须在网络边界上做桩：真实 API 今天 404、
+# 明天可能就 200，用例不能跟着上游的心情变。DB 文件格式：URL 子串 <TAB> code=<n>|body=<文件>
+OF=$WORK/official
+mkdir -p "$OF/stub" "$OF/bin"
+cat >"$OF/pins.env" <<'EOF'
+OFFICIAL_FTTR_BACKEND_REPO=LazuliKao/openwrt-fttr
+OFFICIAL_FTTR_APP_REPO=LazuliKao/luci-app-fttr
+OFFICIAL_FTTR_APP_SHA=9ae3e9428aca4fdab09da36c91c549c7aa54a729
+EOF
+# 界面仓库的 git 树：按上游 main 的真实形态——只有 po/ 和 root/，没有 Makefile、没有 htdocs
+cat >"$OF/app_tree_nopkg.json" <<'EOF'
+{"tree":[{"path":"package/luci-app-fttr/po/zh_Hans/fttr.po","type":"blob"},
+{"path":"package/luci-app-fttr/root/usr/share/luci/menu.d/luci-app-fttr.json","type":"blob"}]}
+EOF
+cat >"$OF/app_tree_full.json" <<'EOF'
+{"tree":[{"path":"package/luci-app-fttr/Makefile","type":"blob"},
+{"path":"package/luci-app-fttr/htdocs/fttr/index.js","type":"blob"}]}
+EOF
+cat >"$OF/backend_tree_full.json" <<'EOF'
+{"tree":[{"path":"h3c-fmcs/Makefile","type":"blob"},
+{"path":"h3c-fmcs-firmware/Makefile","type":"blob"},
+{"path":"h3c-fttr-tools/Makefile","type":"blob"}]}
+EOF
+cat >"$OF/backend_tree_no_tools.json" <<'EOF'
+{"tree":[{"path":"h3c-fmcs/Makefile","type":"blob"},
+{"path":"h3c-fmcs-firmware/Makefile","type":"blob"}]}
+EOF
+printf '{"ref":"heads/main","object":{"sha":"9ae3e9428aca4fdab09da36c91c549c7aa54a729"}}\n' >"$OF/ref.json"
+
+cat >"$OF/stub/curl" <<'EOF'
+#!/usr/bin/env bash
+# 只认这道闸用到的几种调用形态：-w '%{http_code}'（探状态）与直接取 body。
+mode="" url=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -w) mode=$2; shift 2 ;;
+        -o) shift 2 ;;
+        -n) shift ;;
+        --netrc-file) shift 2 ;;
+        -s|--silent) shift ;;
+        http*) url=$1; shift ;;
+        *) shift ;;
+    esac
+done
+[ -f "$CURL_DB" ] || { echo "000"; exit 0; }
+while IFS=$'\t' read -r pat rest; do
+    [ -n "$pat" ] || continue
+    case "$url" in
+        *"$pat"*)
+            case "$rest" in
+                code=*) [ -n "$mode" ] && printf '%s' "${rest#code=}" || { cat "$DEFAULT_BODY" 2>/dev/null; exit 0; } ;;
+                body=*) cat "${rest#body=}" ;;
+            esac
+            exit 0 ;;
+    esac
+done <"$CURL_DB"
+# 没登记过的 URL：状态查询给 404，body 查询给空——都算「取不到」，让闸自己说清。
+[ -n "$mode" ] && printf '404' || printf '{}'
+EOF
+chmod +x "$OF/stub/curl"
+
+official_run() {
+    env PINS="$OF/pins.env" CURL_DB="$1" DEFAULT_BODY="$OF/ref.json" \
+        WITH_FEED="${2-0}" FTTR_TOKEN="${3-}" PATH="$OF/stub:$PATH" \
+        bash "$REPO_DIR/scripts/check_official_fttr.sh"
+}
+
+# 今天真实世界的形态：后端私有 + 界面仓库不是个能编的包
+printf 'LazuliKao/openwrt-fttr\tcode=404\nLazuliKao/luci-app-fttr\tcode=200\nluci-app-fttr/git/trees\tbody=%s\nluci-app-fttr/git/ref\tbody=%s\n' \
+    "$OF/app_tree_nopkg.json" "$OF/ref.json" >"$OF/db_today"
+run_expect fail "后端私有 + 界面缺 Makefile 要拦" "不可公开取用" official_run "$OF/db_today"
+out_of=$(mktemp)
+official_run "$OF/db_today" >"$out_of" 2>&1
+if grep -q "package/luci-app-fttr/Makefile" "$out_of" &&
+    grep -q "已构建的 htdocs" "$out_of" && grep -q "fttr 的" "$out_of"; then
+    say "√ [缺口逐条列出：Makefile、htdocs、以及运行时契约（ubus fttr）]"
+    pass=$((pass + 1))
+else
+    say "× [缺口清单不完整：$(head -6 "$out_of" | tr '\n ' ' ')]"
+    failed=$((failed + 1))
+fi
+rm -f "$out_of"
+
+# 两个开关同时开：先拦住，别等到装了两套抢同一个 FPGA
+run_expect fail "官方源与 feed 同时开要拦" "同时开" official_run "$OF/db_today" 1
+
+# 全都齐：应当放行，并且提醒这仍只是「装得上」
+printf 'LazuliKao/openwrt-fttr/git/trees\tbody=%s\nLazuliKao/openwrt-fttr\tcode=200\nluci-app-fttr/git/trees\tbody=%s\nluci-app-fttr/git/ref\tbody=%s\nluci-app-fttr\tcode=200\n' \
+    "$OF/backend_tree_full.json" "$OF/app_tree_full.json" "$OF/ref.json" >"$OF/db_full"
+run_expect pass "仓库与包都齐时放行" "" official_run "$OF/db_full"
+
+# 后端在但少一个包：要指名是哪个
+printf 'LazuliKao/openwrt-fttr/git/trees\tbody=%s\nLazuliKao/openwrt-fttr\tcode=200\nluci-app-fttr/git/trees\tbody=%s\nluci-app-fttr/git/ref\tbody=%s\nluci-app-fttr\tcode=200\n' \
+    "$OF/backend_tree_no_tools.json" "$OF/app_tree_full.json" "$OF/ref.json" >"$OF/db_notools"
+run_expect fail "后端少 h3c-fttr-tools 要指名" "h3c-fttr-tools" official_run "$OF/db_notools"
+
+# 令牌只许出现在环境里：让后端「靠令牌才可见」，输出里不能漏出它
+printf 'LazuliKao/openwrt-fttr\tcode=404\nluci-app-fttr/git/trees\tbody=%s\nluci-app-fttr/git/ref\tbody=%s\nluci-app-fttr\tcode=200\n' \
+    "$OF/app_tree_full.json" "$OF/ref.json" >"$OF/db_token"
+out_tk=$(mktemp)
+official_run "$OF/db_token" 0 "ghp_SECRETVISIBLEVALUE123" >"$out_tk" 2>&1
+if grep -q "SECRETVISIBLEVALUE" "$out_tk"; then
+    say "× [令牌漏进了输出]"
+    failed=$((failed + 1))
+elif grep -q "token:private-or-missing" "$out_tk"; then
+    say "√ [带了令牌也只报结论，不吐令牌本身；两个词都写出来（anon+token）]"
+    pass=$((pass + 1))
+else
+    say "× [期望看到 anon+token 双探测结论，实际：$(head -3 "$out_tk" | tr '\n ' ' ')]"
+    failed=$((failed + 1))
+fi
+rm -f "$out_tk"
+
+say
 say "### 场景 5：load_signing_key.sh"
 # 用真生成的 EC 私钥，才能走到「usign 那一对没配」这条分支上；
 # 拿假密钥喂进去只会在第一步就报「不是能读的私钥」，测不到后面的判据。

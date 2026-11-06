@@ -23,7 +23,8 @@ overlay/                     盖到引擎上的差异（本仓库真正的产物
   deconfig/fragments/{ebpf_btf,honk,fttr}.config
   recipes/feed_pins|ebpf_btf|honk|hm2004_fttr_feed|h3c-hm2004-du_fttr|vantage_feed|luci_theme_vantage
 scripts/                     apply_overlay / preclone / load_signing_key
-                             assert_prebuild / assert_artifacts / assert_rootfs / check_fttr_dts
+                             assert_prebuild / assert_artifacts / assert_rootfs
+                             check_fttr_dts / check_official_fttr
 tests/                       dryrun.sh（门禁的正反分支）/ check_recipes.sh
 .github/workflows/build.yml  唯一工作流
 ```
@@ -133,8 +134,11 @@ openwrt，加 `pbs05/openwrt-pon-drivers`、`pbs05/openwrt-pon-userspace`）。�
 | 输出 sysupgrade.bin / factory.bin / config.seed / 完整日志 | sysupgrade 有；**factory.bin 该 profile 不产出**（第 6 节）；`.config`→`config.seed`、`config.buildinfo`、`build.log`、`overlay.diff`、`SHA256SUMS.txt` 都进产物 |
 | 签名密钥用本机私钥、存 Secrets、禁止硬编码 | `load_signing_key.sh`，文件名按 `pbs05/ponwrt` 的 `rules.mk:353-355`（`private-key.pem`/`public-key.pem`/`key-build`）；缺密钥直接失败并打印生成命令 |
 
-**没有照搬**引擎上游 workflow 的一处：它对 `lk_h3c_hm2004_du` 用 GitHub App 令牌去拉两个**私有**仓库
-（`LazuliKao/openwrt-fttr`、`LazuliKao/luci-app-fttr`）。我们没那个 App，也不该把私有依赖引进自己的工程。
+**没有照搬**引擎上游 workflow 的一处：它对 `lk_h3c_hm2004_du` 用 GitHub App 令牌去拉私有仓库。
+2026-11-06 官方把界面 `LazuliKao/luci-app-fttr` 开源了（Apache-2.0），但后端
+`LazuliKao/openwrt-fttr` 依旧私有——用仓库所有者自己的令牌查 API 也是 404，qwe-qaq 那边同样私有。
+上游那个 recipe（`wrt_core/recipes/h3c-hm2004-du_fttr/recipe.json`）本身是 `enabled:false`，
+它 import 的四个包里三个仍在私有仓库。这条线现在由 `with_official_fttr` + `scripts/check_official_fttr.sh` 随时可复查（见第 6 节），不再靠转述。
 
 ### 五、风险规避
 
@@ -142,7 +146,7 @@ openwrt，加 `pbs05/openwrt-pon-drivers`、`pbs05/openwrt-pon-userspace`）。�
 | --- | --- |
 | PON 优先级最高，重点校验驱动加载、BOSA、mtd、分区保护 | `assert_artifacts.sh` 先查 PON 五项包，再查 BTF，最后查附加功能——顺序就是优先级 |
 | PON 异常时优先回退硬件补丁，不保留 eBPF/honk | 结构上支持：ponwrt 树按 SHA 回退，`ebpf_btf`/`honk` 是独立片段，去掉名字即可 |
-| 不替换 fttr 相关包 | **做不到**，见第 6 节：原三包在私有仓库，必须换公开源与包名 |
+| 不替换 fttr 相关包 | **半做到**：官方界面 `luci-app-fttr` 已开源（2026-11-06，Apache-2.0），但它 import 的三个本体包仍在私有的 `openwrt-fttr` 里，所以只能用公开源与别的包名顶上；见第 6 节 |
 | eBPF 必须开 `DEBUG_INFO_BTF` | 见第 2 节，REDUCED 是关键，已显式关闭并双向校验 |
 | 不整体替换主干内核/rootfs | 内核版本、rootfs 类型全由源码树+引擎决定，overlay 没碰 |
 | 禁止混用多套 sysupgrade 脚本 | 只用源码树自带的 `target/linux/airoha/an7581/base-files/lib/upgrade/platform.sh`（含 `airoha_require_ubi_layout` 的 UBI 卷校验）；overlay 里没有第二份升级脚本 |
@@ -160,7 +164,8 @@ openwrt，加 `pbs05/openwrt-pon-drivers`、`pbs05/openwrt-pon-userspace`）。�
 
 门禁按文档优先级排列，且**每条都指定了失败时要说的话**：
 PON 包缺失 → 立刻红；BTF 没进内核 → 红并说明 pahole/REDUCED 两种可能；
-honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归档之后，所以不会白等）。
+honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归档之后，所以不会白等）；
+`with_official_fttr` → 在任何耗时工作之前先探上游仓库与包，几分钟内把「缺哪个仓库、缺哪个 Makefile」列出来。
 
 ---
 
@@ -199,12 +204,21 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
   `fip/ubootenv/ubootenv2/factory/fit`）、`03_pon_data` 的 factory 卷读取偏移。
 * BTF 的真实卡点是 `DEBUG_INFO_REDUCED`（`Config-kernel.in:566/594` 的 depends 与 default 白名单）。
 * `CONFIG_BPF_CORE` 在 Linux Kconfig 中不存在。
-* `LazuliKao/openwrt-fttr` HTTP 404（私有）。
+* `LazuliKao/openwrt-fttr` HTTP 404——2026-11-07 用仓库所有者（likz0421）自己的令牌再查一次仍是 404，
+  即对本仓库所有人也不可见；`qwe-qaq/openwrt-fttr`、`qwe-qaq/luci-app-fttr` 同样私有。
+* `LazuliKao/luci-app-fttr` 2026-11-06 起公开（Apache-2.0，main HEAD `9ae3e942`）。仓库里
+  `package/luci-app-fttr/` 只有 `po/` 与 `root/`（menu.d、acl.d），**没有 Makefile、没有 htdocs**，
+  而它 README 写「生成的 LuCI JS 已提交，打 OpenWrt 包不需要 Node」——AGENTS.md 自己写明 htdocs 是
+  被 gitignore 的本地产物。这是文档与仓库现状不符，不是我的推测：两项都用 API 树列过。
+  运行时契约在 `root/usr/share/rpcd/acl.d/luci-app-fttr.json`：名为 `fttr` 的 ubus 对象、24 个方法，
+  加 UCI 的 `fttr` 段——都由私有后端里的 `fttrd` 提供。
+* FTTR 公开 feed 的四个包名、`KCONFIG` 指向不存在的内核符号、驱动要的 10 个 GPIO con_id
+  （`fmcs_load.c:300-315` 的 clk/data/nconfig/rst/status/conf-done，加 `fmcs_spi.c:321-324`
+  位敲 SPI 的 sck/mosi/miso/cs）与 ponwrt DTS 的三条 `fpga-*-gpios` 不一致；pbs05 与 1018ji
+  两份 DTS 在这一段逐字节相同（各 12224 字节），所以不是某个 fork 的漂移。
 * honk feed 的包名、架构、内核版本要求、`DEPENDS` 里的四个 kmod。
-* FTTR 公开 feed 的四个包名、`KCONFIG` 指向不存在的内核符号、驱动要的 GPIO con_id
-  （`clk/data/nconfig/rst/status/conf-done`）与 ponwrt DTS 的 `fpga-*-gpios` 不一致。
 * 引擎的 recipe 校验程序与阶段列表（`tests/check_recipes.sh` 直接从 `recipe.sh` 抽取后运行）。
-* 本仓库的门禁脚本：`tests/dryrun.sh` 68 项正反分支全过（假目录树 + `dtc`/`readelf` PATH 桩）。
+* 本仓库的门禁脚本：`tests/dryrun.sh` 78 项正反分支全过（假目录树 + `dtc`/`readelf`/`curl` PATH 桩）。
 
 **未验证（要说清楚，别当成已经成了）**
 
@@ -228,6 +242,7 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
 | `APK_SIGNING_PRIVATE_KEY` | 是 | apk 软件仓库签名（`private-key.pem`，公钥自动导出并校验自洽） | `openssl ecparam -name prime256v1 -genkey -noout -out private-key.pem`，把文件全文贴进 Secret |
 | `APK_SIGNING_PUBLIC_KEY` | 否 | 配了会额外校验公私钥是否同一把 | `openssl ec -in private-key.pem -pubout` |
 | `USIGN_PRIVATE` / `USIGN_PUBLIC` | 否 | sysupgrade 元数据签名（`key-build`/`key-build.pub`），base64 单行 | `usign -G -q -p key-build -d key-build.sec` 后 `base64 -w0` |
+| `FTTR_TOKEN` | 否 | 只在 `with_official_fttr` 时用：探测/拉取私有的 `LazuliKao/openwrt-fttr`。`check_official_fttr.sh` 只从环境变量读，写进 0600 的临时 netrc、退出即删，不进命令行也不打印 | 一个contents只读的 fine-grained token |
 
 为什么 apk 钥匙必须固定而不是每次现生成：设备端要挂自己的软件源，密钥每构建一变，升级就验签失败，
 换固件还得再灌一次信任——和「稳定版」正相反。
@@ -322,6 +337,15 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
    * `moltd` / Rust 版控制器（ACS、MQTT、HL202 等分支）公开无处可取，只有 miniolt 一个命令行。
    * 位流是原厂提取的二进制，feed 与作者研究库都写明「未确认可以再分发」。往公开 Release
      里发镜像前，这一条得你自己判断。
+   * **文档原指的官方那一套（`with_official_fttr`）复查结论。** 2026-11-06 官方开源了界面
+     `LazuliKao/luci-app-fttr`，但引擎 recipe import 的三个本体包（`h3c-fmcs`、
+     `h3c-fmcs-firmware`、`h3c-fttr-tools`）仍在私有的 `LazuliKao/openwrt-fttr` 里，
+     对本仓库所有者也不可见。所以官方那条路今天仍走不通，而且不通的原因很具体：
+     界面的 24 个 ubus 方法（`fttr` 对象）和 UCI `fttr` 段都由后端 `fttrd` 提供，
+     只装界面会得到一个能打开、每次调用都报错的菜单——这种「绿但功能不在」正是门禁要拦的。
+     哪天有令牌或后端开源了，`bash scripts/check_official_fttr.sh`（CI 里是
+     `with_official_fttr=true`，几分钟内出结论，不占两小时）会把还缺什么逐条列出来；
+     它探到全齐也只是放行到「能编能装」，运行时仍按上面 GPIO/寄存器通路那两条核。
 2. **`factory.bin` 不存在，能拿到的是 `recovery.itb`。** 该 profile 的镜像定义只有
    `IMAGES := sysupgrade.itb`，救砖走 `KERNEL_INITRAMFS_SUFFIX := -recovery.itb` + U-Boot/UBI
    那条路，不是 TFTP 全镜像——文档这条要求在上游没有对应物。
@@ -391,3 +415,6 @@ LuCI 里可以切回去；只把"默认"这一票投给 Vantage。
 * `MERGE_REPO`/`MERGE_SHA` —— 仅作对照参考，工作流会验证该 commit 存在，不参与构建。
 * `HONK_SHA` / `FTTR_SHA` / `VANTAGE_SHA` —— 附加 feed 的锁版本，feed 名固定为 `honk` / `hm2004`
   （后者是包 Makefile 里硬编码的路径 `$(TOPDIR)/feeds/hm2004/original`，改名即失效）。
+* `OFFICIAL_FTTR_BACKEND_REPO` / `OFFICIAL_FTTR_APP_REPO` / `OFFICIAL_FTTR_APP_SHA` ——
+  文档原指的官方那一套。后端仓库至今私有，所以这三个值只被 `check_official_fttr.sh` 用来复查；
+  `APP_SHA` 与上游 main 不一致时脚本会当场说出来（它是公开仓库，能直接比）。

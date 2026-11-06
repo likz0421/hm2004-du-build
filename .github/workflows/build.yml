@@ -8,6 +8,8 @@ name: HM2004-DU 固件构建
 #   APK_SIGNING_PRIVATE_KEY   必需：apk 软件仓库签名私钥（private-key.pem 全文）
 #   APK_SIGNING_PUBLIC_KEY    可选：配了会校验公私钥自洽
 #   USIGN_PRIVATE/USIGN_PUBLIC 可选：固件元数据签名；缺了会降级为构建系统临时钥匙并打印说明
+#   FTTR_TOKEN                可选：只在 with_official_fttr 时用，用来探测/拉取私有的
+#                             LazuliKao/openwrt-fttr。脚本只从环境读，不进命令行、不打印。
 # 生成命令见 README 第 5 节。
 
 on:
@@ -17,6 +19,10 @@ on:
         description: 带上 FTTR 组件（公开源 rayniel/openwrt-hm2004-feed；见 README 第 6 节的运行时限制）
         type: boolean
         default: true
+      with_official_fttr:
+        description: 改用文档原指的官方源（LazuliKao/openwrt-fttr + luci-app-fttr）；后端仓库至今私有，开了会在几分钟内把缺口报清楚
+        type: boolean
+        default: false
       extra_fragments:
         description: 追加引擎配置片段，逗号分隔（例如 docker_deps）
         required: false
@@ -26,10 +32,10 @@ on:
         type: boolean
         default: false
 
-run-name: HM2004-DU ${{ inputs.with_fttr && 'FTTR开' || 'FTTR关' }} · ${{ inputs.preflight_only && '仅核验' || '完整构建' }}
+run-name: HM2004-DU ${{ inputs.with_official_fttr && 'FTTR官方源' || (inputs.with_fttr && 'FTTR开' || 'FTTR关') }} · ${{ inputs.preflight_only && '仅核验' || '完整构建' }}
 
 concurrency:
-  group: hm2004-du-${{ inputs.with_fttr }}
+  group: hm2004-du-${{ inputs.with_fttr }}-${{ inputs.with_official_fttr }}
   cancel-in-progress: false
 
 permissions:
@@ -115,6 +121,16 @@ jobs:
           done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 官方 FTTR 可达性探测（开了 with_official_fttr 才跑，几分钟内说清缺什么）
+        if: ${{ inputs.with_official_fttr }}
+        run: bash "$GITHUB_WORKSPACE/scripts/check_official_fttr.sh"
+        env:
+          PINS: ${{ github.workspace }}/pins.env
+          # 两个开关同时开会出两套互不相容的 fttr 包，先拦住再说。
+          WITH_FEED: ${{ inputs.with_fttr && '1' || '0' }}
+          # 令牌只在这一步注入：脚本从环境读，写 0600 的临时 netrc 并在退出时删除，不进命令行、不打印。
+          FTTR_TOKEN: ${{ secrets.FTTR_TOKEN }}
 
       - name: 取引擎并叠加 overlay
         run: bash "$GITHUB_WORKSPACE/scripts/apply_overlay.sh"
@@ -283,3 +299,10 @@ jobs:
           files: |
             dl/firmware/*
             dl/SHA256SUMS.txt
+            dl/config.seed
+            dl/config.buildinfo
+            dl/pins.env
+            dl/pins.feeds
+            dl/overlay.diff
+            dl/build.log
+            dl/kmods.tar.gz
