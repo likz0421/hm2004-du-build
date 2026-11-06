@@ -77,11 +77,17 @@ fi
 #                     得到 2024.0418.0001；驱动真实版本仍由 fmcs.h 决定，不改它本身。
 # 对应文档「二、约束：驱动补丁要适配当前内核版本」。补丁用 --fuzz=0：
 # feed 一漂移就失败，绝不容忍"上下文对不上也硬打"。
+#   构建 42242418204：fmcs 编过了，换 fttr-tools 报
+#       make[4]: *** No rule to make target '../driver/fmcs_uapi.h', needed by 'miniolt'
+#     —— 包定义把 userspace/* 和 driver/fmcs_uapi.h 平铺拷进同一个 PKG_BUILD_DIR，
+#     而 userspace/Makefile 仍按 feed 里的嵌套布局写依赖与 -I../driver。
+#     miniolt.c 自己 include 的是 "fmcs_uapi.h"（同目录），所以改成平铺形式即可。
 SRC="$BUILD_DIR/feeds/hm2004/original/driver/fmcs.c"
 HDR="$BUILD_DIR/feeds/hm2004/original/driver/fmcs.h"
+USR="$BUILD_DIR/feeds/hm2004/original/userspace/Makefile"
 PKG="$BUILD_DIR/feeds/hm2004/package/fttr-fmcs/Makefile"
 PATCH="$RECIPE_DIR/patches/fmcs-kernel6.18-adapt.patch"
-for f in "$SRC" "$HDR" "$PKG" "$PATCH"; do
+for f in "$SRC" "$HDR" "$USR" "$PKG" "$PATCH"; do
     if [ ! -f "$f" ]; then
         echo "fttr: 期待的文件不存在：$f" >&2
         exit 1
@@ -89,18 +95,18 @@ for f in "$SRC" "$HDR" "$PKG" "$PATCH"; do
 done
 
 if grep -q 'fmcs_no_llseek' "$SRC" && grep -q 'include <linux/cdev.h>' "$HDR" &&
-    grep -q 'patsubst V%' "$PKG"; then
+    grep -q '^miniolt: miniolt\.c fmcs_uapi\.h$' "$USR" && grep -q 'patsubst V%' "$PKG"; then
     echo "fttr: 驱动源码与包定义已打过适配补丁，跳过"
 else
     if ! (cd "$BUILD_DIR" && patch -p1 -N --fuzz=0 -i "$PATCH"); then
         echo "× fttr: 适配补丁打不上（--fuzz=0，上下文必须逐行对得上）——" >&2
-        echo "  feed 的 fmcs.c / fmcs.h / fttr-fmcs/Makefile 变了。要重新核对：" >&2
-        echo "    no_llseek（已删）、genl_family.name（数组不是指针）、" >&2
-        echo "    fmcs.h 里 struct cdev / atomic_t / wait_queue_head_t 的自含头、" >&2
-        echo "    PKG_VERSION 对 apk 版本格式是否合法" >&2
+        echo "  feed 的 fmcs.c / fmcs.h / userspace/Makefile / fttr-fmcs/Makefile 变了。" >&2
+        echo "  要重新核对：no_llseek（已删）、genl_family.name（数组不是指针）、" >&2
+        echo "  fmcs.h 的 cdev/atomic/wait 自含头、userspace 里 ../driver 的布局假设、" >&2
+        echo "  PKG_VERSION 对 apk 版本格式是否合法" >&2
         exit 1
     fi
-    echo "fttr: 已应用适配补丁（fmcs.c + fmcs.h + fttr-fmcs/Makefile）"
+    echo "fttr: 已应用适配补丁（4 个文件）"
 fi
 
 # ---- 4) 自检：确认每一处报错点真的被改掉 ----
@@ -118,6 +124,17 @@ if ! grep -q 'include <linux/cdev.h>' "$HDR"; then
 fi
 if ! grep -q 'patsubst V%' "$PKG"; then
     echo "fttr: 自检失败，PKG_VERSION 没做规范化：V2024-0418-0001 会被 apk 判 version invalid" >&2
+    exit 1
+fi
+# 判 make 真正会用到的那两行，不能宽泛 grep "../driver"——
+# 补丁自带的注释里就出现这个词，宽判会自己误伤自己（本机测试抓到过）。
+if ! grep -qE '^miniolt:[[:space:]]+miniolt\.c[[:space:]]+fmcs_uapi\.h[[:space:]]*$' "$USR"; then
+    echo "fttr: 自检失败，miniolt 的依赖不是平铺形式（../driver 会让 make 报 No rule to make target）" >&2
+    grep -nE '^miniolt:' "$USR" >&2 || true
+    exit 1
+fi
+if grep -qE '^[[:space:]]*CPPFLAGS[[:space:]]*\+[=][:]?=?[[:space:]]*-I\.\./driver' "$USR"; then
+    echo "fttr: 自检失败，userspace/Makefile 还在用 -I../driver" >&2
     exit 1
 fi
 

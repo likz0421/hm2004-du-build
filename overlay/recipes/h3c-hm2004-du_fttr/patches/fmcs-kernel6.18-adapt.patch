@@ -59,6 +59,29 @@ diff -ru a/feeds/hm2004/original/driver/fmcs.h b/feeds/hm2004/original/driver/fm
  #include <linux/workqueue.h>
  
  #include "fmcs_uapi.h"
+diff -ru a/feeds/hm2004/original/userspace/Makefile b/feeds/hm2004/original/userspace/Makefile
+--- a/feeds/hm2004/original/userspace/Makefile
++++ b/feeds/hm2004/original/userspace/Makefile	2026-11-07 01:04:34.972171300 +0800
+@@ -4,7 +4,9 @@
+ 
+ CC	?= $(CROSS_COMPILE)gcc
+ CFLAGS	?= -O2 -Wall -Wextra -Werror
+-CPPFLAGS += -I../driver
++# 打包时 Build/Prepare 把 driver/fmcs_uapi.h 与 userspace/* 平铺到同一个目录，
++# 所以这里不再指向 ../driver；包头文件就在当前目录（包 Makefile 也给了 -I$(PKG_BUILD_DIR)）。
++CPPFLAGS += -I.
+ 
+ PREFIX	?= /usr
+ BINDIR	?= $(PREFIX)/bin
+@@ -13,7 +15,7 @@
+ 
+ all: $(PROGRAMS)
+ 
+-miniolt: miniolt.c ../driver/fmcs_uapi.h
++miniolt: miniolt.c fmcs_uapi.h
+ 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ miniolt.c
+ 
+ install: $(PROGRAMS)
 diff -ru a/feeds/hm2004/package/fttr-fmcs/Makefile b/feeds/hm2004/package/fttr-fmcs/Makefile
 --- a/feeds/hm2004/package/fttr-fmcs/Makefile
 +++ b/feeds/hm2004/package/fttr-fmcs/Makefile	2026-11-06 20:34:03.245697900 +0800

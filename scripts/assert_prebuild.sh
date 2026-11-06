@@ -220,6 +220,17 @@ if [ "$WITH_FTTR" = "1" ]; then
         fi
         # apk-tools 不接受字母开头的版本组件，上游直接拿驱动版本串当 PKG_VERSION。
         fttr_pkg="$BUILD_DIR/feeds/hm2004/package/fttr-fmcs/Makefile"
+        fttr_usr="$BUILD_DIR/feeds/hm2004/original/userspace/Makefile"
+        if [ -f "$fttr_usr" ]; then
+            # 只判 make 真正使用的依赖行；宽判 ../driver 会命中补丁自己的注释。
+            if ! grep -qE '^miniolt:[[:space:]]+miniolt\.c[[:space:]]+fmcs_uapi\.h[[:space:]]*$' "$fttr_usr"; then
+                missing+=("userspace/Makefile 的 miniolt 依赖不是平铺形式：fttr-tools 会 No rule to make target '../driver/fmcs_uapi.h'")
+                fail=1
+            fi
+        else
+            missing+=("找不到 userspace/Makefile：$fttr_usr")
+            fail=1
+        fi
         if [ -f "$fttr_pkg" ]; then
             grep -q 'patsubst V%' "$fttr_pkg" || {
                 missing+=("fttr-fmcs 的 PKG_VERSION 没规范化：V2024-0418-0001 会被 apk 判 package version is invalid")

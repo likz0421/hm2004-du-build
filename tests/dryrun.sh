@@ -146,6 +146,12 @@ static loff_t fmcs_no_llseek(struct file *file, loff_t offset, int whence)
 	.llseek		= fmcs_no_llseek,
 	strscpy(family->name, fmcs_genl_names[i], sizeof(family->name));
 EOF
+    mkdir -p "$dir/feeds/hm2004/original/userspace"
+    cat >"$dir/feeds/hm2004/original/userspace/Makefile" <<'EOF'
+CPPFLAGS += -I.
+miniolt: miniolt.c fmcs_uapi.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ miniolt.c
+EOF
 
     # apply.sh 处理后的形态（没有 KCONFIG 行、驱动是 obj-m）
     mkdir -p "$dir/package/feeds/hm2004/fttr-fmcs" "$dir/feeds/hm2004/package/fttr-fmcs"
@@ -468,6 +474,12 @@ sed -i '/patsubst V%/d' "$B/feeds/hm2004/package/fttr-fmcs/Makefile"
 run_expect fail "版本号没规范化要拦" "package version is invalid" prebuild
 sed -i '/^PKG_RELEASE/i PKG_VERSION:=$(subst -,.,$(patsubst V%,%,$(PKG_VERSION)))' \
     "$B/feeds/hm2004/package/fttr-fmcs/Makefile"
+
+sed -i 's|^miniolt: miniolt\.c fmcs_uapi\.h$|miniolt: miniolt.c ../driver/fmcs_uapi.h|' \
+    "$B/feeds/hm2004/original/userspace/Makefile"
+run_expect fail "userspace 还按嵌套布局写依赖要拦" "No rule to make target" prebuild
+sed -i 's|^miniolt: miniolt\.c \.\./driver/fmcs_uapi\.h$|miniolt: miniolt.c fmcs_uapi.h|' \
+    "$B/feeds/hm2004/original/userspace/Makefile"
 
 run_expect pass "补回之后重新全绿" "" prebuild
 
