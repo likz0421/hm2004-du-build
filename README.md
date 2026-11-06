@@ -204,7 +204,7 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
 * FTTR 公开 feed 的四个包名、`KCONFIG` 指向不存在的内核符号、驱动要的 GPIO con_id
   （`clk/data/nconfig/rst/status/conf-done`）与 ponwrt DTS 的 `fpga-*-gpios` 不一致。
 * 引擎的 recipe 校验程序与阶段列表（`tests/check_recipes.sh` 直接从 `recipe.sh` 抽取后运行）。
-* 本仓库的门禁脚本：`tests/dryrun.sh` 65 项正反分支全过（假目录树 + `dtc`/`readelf` PATH 桩）。
+* 本仓库的门禁脚本：`tests/dryrun.sh` 68 项正反分支全过（假目录树 + `dtc`/`readelf` PATH 桩）。
 
 **未验证（要说清楚，别当成已经成了）**
 
@@ -250,7 +250,7 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
        `wait_queue_head_t` 却没 include 对应头；`fmcs.c` 恰好自己先包含了 `cdev.h` 才显得没事，
        换一个编译单元就崩。这是头文件自含性问题，不是某个 .c 的问题。
 
-     由 `patches/fmcs-kernel6.18-adapt.patch` 一次修掉（4 个文件、8 个 hunk）：本地实现语义相同的
+     由 `patches/fmcs-kernel6.18-adapt.patch` 一次修掉（5 个文件、9 个 hunk）：本地实现语义相同的
      `fmcs_no_llseek()`（返回 `-ESPIPE`，与内核原函数一致）、`name` 改 `strscpy(...)`、
      头文件补 `linux/cdev.h` / `linux/atomic.h` / `linux/wait.h`。
      - 同一场构建的收尾还报了一条：`ERROR: info field 'version' has invalid value:
@@ -266,9 +266,17 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
        **平铺**拷进同一个 `PKG_BUILD_DIR`，而 `userspace/Makefile` 仍按 feed 的嵌套布局
        写依赖与 `-I../driver`。`miniolt.c` 里 include 的是同目录的 `"fmcs_uapi.h"`，
        所以依赖行与 `-I` 各改一处即可。
+     - 构建 42259744326：`miniolt.c:235 'ETH_P_ALL' undeclared`、`:290 'ETH_ALEN'
+       undeclared`。glibc 会经 `<netpacket/packet.h>` 间接带进这些常量，musl 不会，
+       补 `#include <linux/if_ether.h>`。全文扫过其余符号（if_nametoindex / htons /
+       struct ifreq 都有对应头，没有 strlcpy、bcopy 之类 glibc 专有函数），
+       所以这是该文件最后一个此类问题。
+     - 为此工作流加了「预编译 fttr 用户态包」一步：`fttr-tools` 不需要内核，只要交叉
+       工具链，约 30 分钟就能暴露编译错误；放在整场构建里要等 1 小时 20 分才轮到它。
+       这类错误已经烧过四轮，值得单独提出来。
 
      补丁用 `patch --fuzz=0` 打，feed 源码一漂移就当场失败，绝不容忍"凑合打上"；
-     `apply.sh` 打完还要过五条自检，`assert_prebuild.sh` 在构建前核对同样的点。
+     `apply.sh` 打完还要过六条自检，`assert_prebuild.sh` 在构建前核对同样的点。
      这里有个自己的教训值得记：第一版自检用 `grep '../driver'` 宽判，结果命中了
      **补丁注释里写的 `../driver`**，把自己误判成失败——判据必须盯 make 真正使用的
      那一行（`^miniolt: miniolt.c fmcs_uapi.h`），而不是任一处字符串。这条是本机

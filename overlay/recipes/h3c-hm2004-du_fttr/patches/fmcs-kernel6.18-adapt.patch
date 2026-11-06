@@ -82,6 +82,17 @@ diff -ru a/feeds/hm2004/original/userspace/Makefile b/feeds/hm2004/original/user
  	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ miniolt.c
  
  install: $(PROGRAMS)
+diff -ru a/feeds/hm2004/original/userspace/miniolt.c b/feeds/hm2004/original/userspace/miniolt.c
+--- a/feeds/hm2004/original/userspace/miniolt.c
++++ b/feeds/hm2004/original/userspace/miniolt.c	2026-11-07 03:46:07.694431400 +0800
+@@ -30,6 +30,7 @@
+ #include <arpa/inet.h>
+ #include <errno.h>
+ #include <fcntl.h>
++#include <linux/if_ether.h>
+ #include <net/if.h>
+ #include <netpacket/packet.h>
+ #include <stdbool.h>
 diff -ru a/feeds/hm2004/package/fttr-fmcs/Makefile b/feeds/hm2004/package/fttr-fmcs/Makefile
 --- a/feeds/hm2004/package/fttr-fmcs/Makefile
 +++ b/feeds/hm2004/package/fttr-fmcs/Makefile	2026-11-06 20:34:03.245697900 +0800

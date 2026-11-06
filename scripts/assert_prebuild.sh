@@ -231,6 +231,17 @@ if [ "$WITH_FTTR" = "1" ]; then
             missing+=("找不到 userspace/Makefile：$fttr_usr")
             fail=1
         fi
+        # musl 不像 glibc 那样间接提供 ETH_* 常量，miniolt.c 必须自己 include。
+        fttr_mini="$BUILD_DIR/feeds/hm2004/original/userspace/miniolt.c"
+        if [ -f "$fttr_mini" ]; then
+            grep -q 'include <linux/if_ether.h>' "$fttr_mini" || {
+                missing+=("miniolt.c 没 include linux/if_ether.h：ETH_P_ALL / ETH_ALEN 在 musl 下未定义")
+                fail=1
+            }
+        else
+            missing+=("找不到 miniolt.c：$fttr_mini")
+            fail=1
+        fi
         if [ -f "$fttr_pkg" ]; then
             grep -q 'patsubst V%' "$fttr_pkg" || {
                 missing+=("fttr-fmcs 的 PKG_VERSION 没规范化：V2024-0418-0001 会被 apk 判 package version is invalid")

@@ -152,6 +152,14 @@ CPPFLAGS += -I.
 miniolt: miniolt.c fmcs_uapi.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ miniolt.c
 EOF
+    cat >"$dir/feeds/hm2004/original/userspace/miniolt.c" <<'EOF'
+#include <arpa/inet.h>
+#include <linux/if_ether.h>
+#include <net/if.h>
+#include <netpacket/packet.h>
+#include "fmcs_uapi.h"
+	fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+EOF
 
     # apply.sh 处理后的形态（没有 KCONFIG 行、驱动是 obj-m）
     mkdir -p "$dir/package/feeds/hm2004/fttr-fmcs" "$dir/feeds/hm2004/package/fttr-fmcs"
@@ -480,6 +488,11 @@ sed -i 's|^miniolt: miniolt\.c fmcs_uapi\.h$|miniolt: miniolt.c ../driver/fmcs_u
 run_expect fail "userspace 还按嵌套布局写依赖要拦" "No rule to make target" prebuild
 sed -i 's|^miniolt: miniolt\.c \.\./driver/fmcs_uapi\.h$|miniolt: miniolt.c fmcs_uapi.h|' \
     "$B/feeds/hm2004/original/userspace/Makefile"
+
+sed -i '/#include <linux\/if_ether.h>/d' "$B/feeds/hm2004/original/userspace/miniolt.c"
+run_expect fail "miniolt 缺 if_ether.h 要拦" "ETH_P_ALL" prebuild
+sed -i 's|^#include <net/if.h>$|#include <linux/if_ether.h>\n#include <net/if.h>|' \
+    "$B/feeds/hm2004/original/userspace/miniolt.c"
 
 run_expect pass "补回之后重新全绿" "" prebuild
 

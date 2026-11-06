@@ -82,12 +82,19 @@ fi
 #     —— 包定义把 userspace/* 和 driver/fmcs_uapi.h 平铺拷进同一个 PKG_BUILD_DIR，
 #     而 userspace/Makefile 仍按 feed 里的嵌套布局写依赖与 -I../driver。
 #     miniolt.c 自己 include 的是 "fmcs_uapi.h"（同目录），所以改成平铺形式即可。
+#   构建 42259744326：布局修好后 miniolt 又报
+#       miniolt.c:235 'ETH_P_ALL' undeclared / :290 'ETH_ALEN' undeclared
+#     —— glibc 会经 <netpacket/packet.h> 间接带进 ETH_* 常量，musl 不会。
+#     补 #include <linux/if_ether.h>。全文扫过：其余只有 if_nametoindex/htons/
+#     struct ifreq（有 net/if.h、arpa/inet.h 兜着），没有 strlcpy/bcopy 之类
+#     glibc 专有符号，所以这一处是该文件最后一个此类问题。
 SRC="$BUILD_DIR/feeds/hm2004/original/driver/fmcs.c"
 HDR="$BUILD_DIR/feeds/hm2004/original/driver/fmcs.h"
 USR="$BUILD_DIR/feeds/hm2004/original/userspace/Makefile"
+MINI="$BUILD_DIR/feeds/hm2004/original/userspace/miniolt.c"
 PKG="$BUILD_DIR/feeds/hm2004/package/fttr-fmcs/Makefile"
 PATCH="$RECIPE_DIR/patches/fmcs-kernel6.18-adapt.patch"
-for f in "$SRC" "$HDR" "$USR" "$PKG" "$PATCH"; do
+for f in "$SRC" "$HDR" "$USR" "$MINI" "$PKG" "$PATCH"; do
     if [ ! -f "$f" ]; then
         echo "fttr: 期待的文件不存在：$f" >&2
         exit 1
@@ -95,18 +102,21 @@ for f in "$SRC" "$HDR" "$USR" "$PKG" "$PATCH"; do
 done
 
 if grep -q 'fmcs_no_llseek' "$SRC" && grep -q 'include <linux/cdev.h>' "$HDR" &&
-    grep -q '^miniolt: miniolt\.c fmcs_uapi\.h$' "$USR" && grep -q 'patsubst V%' "$PKG"; then
+    grep -q '^miniolt: miniolt\.c fmcs_uapi\.h$' "$USR" &&
+    grep -q 'include <linux/if_ether.h>' "$MINI" && grep -q 'patsubst V%' "$PKG"; then
     echo "fttr: 驱动源码与包定义已打过适配补丁，跳过"
 else
     if ! (cd "$BUILD_DIR" && patch -p1 -N --fuzz=0 -i "$PATCH"); then
         echo "× fttr: 适配补丁打不上（--fuzz=0，上下文必须逐行对得上）——" >&2
-        echo "  feed 的 fmcs.c / fmcs.h / userspace/Makefile / fttr-fmcs/Makefile 变了。" >&2
-        echo "  要重新核对：no_llseek（已删）、genl_family.name（数组不是指针）、" >&2
-        echo "  fmcs.h 的 cdev/atomic/wait 自含头、userspace 里 ../driver 的布局假设、" >&2
+        echo "  feed 的这五个文件有变动：fmcs.c / fmcs.h / userspace/Makefile /" >&2
+        echo "  userspace/miniolt.c / package/fttr-fmcs/Makefile。要重新核对：" >&2
+        echo "  no_llseek（已删）、genl_family.name（数组不是指针）、fmcs.h 的" >&2
+        echo "  cdev/atomic/wait 自含头、userspace 的 ../driver 布局假设、" >&2
+        echo "  miniolt.c 的 ETH_* 常量在 musl 下要自己 include linux/if_ether.h、" >&2
         echo "  PKG_VERSION 对 apk 版本格式是否合法" >&2
         exit 1
     fi
-    echo "fttr: 已应用适配补丁（4 个文件）"
+    echo "fttr: 已应用适配补丁（5 个文件）"
 fi
 
 # ---- 4) 自检：确认每一处报错点真的被改掉 ----
@@ -135,6 +145,10 @@ if ! grep -qE '^miniolt:[[:space:]]+miniolt\.c[[:space:]]+fmcs_uapi\.h[[:space:]
 fi
 if grep -qE '^[[:space:]]*CPPFLAGS[[:space:]]*\+[=][:]?=?[[:space:]]*-I\.\./driver' "$USR"; then
     echo "fttr: 自检失败，userspace/Makefile 还在用 -I../driver" >&2
+    exit 1
+fi
+if ! grep -q 'include <linux/if_ether.h>' "$MINI"; then
+    echo "fttr: 自检失败，miniolt.c 没 include linux/if_ether.h：ETH_P_ALL/ETH_ALEN 在 musl 下未定义" >&2
     exit 1
 fi
 
