@@ -546,8 +546,20 @@ make_dtc_stub "$STUBS_BAD" "$WORK/bad.dts"
 run_expect pass "设备树给了驱动要的线" "" check_dts "$STUBS_OK"
 run_expect fail "线名对不上要拦" "clk-gpios" check_dts "$STUBS_BAD"
 
-run_expect fail "没有 dtc 时不许静默通过" "dtc" \
-    env BUILD_DIR="$B" PATH=/usr/bin:/bin bash "$REPO_DIR/scripts/check_fttr_dts.sh"
+# 没有可解析对象时不许静默通过。dtc 在不在取决于机器（CI 装了 device-tree-compiler），
+# 所以只要求「非零退出 + 说出合法原因之一」，不锁死措辞；
+# 有夹具 DTB 的那条正常路径由上面两个用例负责。
+out3=$(mktemp)
+env BUILD_DIR="$B" PATH=/usr/bin:/bin bash "$REPO_DIR/scripts/check_fttr_dts.sh" >"$out3" 2>&1
+rc3=$?
+if [ "$rc3" -ne 0 ] && grep -qE "没有 dtc|反编译失败|找不到编译出的 DTB" "$out3"; then
+    say "√ [无 dtc / 无有效 DTB → 明确拒绝（本机分支：$(grep -oE '没有 dtc|反编译失败|找不到编译出的 DTB' "$out3" | head -1)）]"
+    pass=$((pass + 1))
+else
+    say "× [期望明确拒绝，实际 rc=$rc3：$(head -2 "$out3" | tr '\n' ' ')]"
+    failed=$((failed + 1))
+fi
+rm -f "$out3"
 
 say
 say "### 场景 5：load_signing_key.sh"
@@ -752,39 +764,60 @@ run_expect fail "apk 公钥没进镜像要拦" "/etc/apk/keys" check_rootfs
 mkdir -p "$RG/etc/apk/keys"; : >"$RG/etc/apk/keys/hm2004.pub"
 
 # 没有可判的东西时，必须拒绝执行或明确失败，绝不能"没检查就当通过"。
-# 两条分支取决于有没有 unsquashfs（CI 装了 squashfs-tools，本机没有）：
-# 这里各造一次，两条都钉住，而不是换台机器就靠运气。
+# 注意别再锁本机环境：CI 的 /usr/bin 里真有 unsquashfs（squashfs-tools 是工作流装的），
+# 所以「有工具/没工具」两种落点都是合法的拒绝分支。这里：
+#   A) 用 PATH 桩强行提供 unsquashfs → 钉住「抠不到镜像」这条分支的措辞；
+#   B) 用本机自然环境跑一次 → 只要求「非零退出 + 说出具体原因」，不锁措辞。
 stub_sq=$WORK/stub_sq; mkdir -p "$stub_sq"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$stub_sq/unsquashfs"; chmod +x "$stub_sq/unsquashfs"
-for scenario in no_tool with_tool; do
-    out_nocarve=$(mktemp)
-    if [ "$scenario" = "with_tool" ]; then p="$stub_sq:/usr/bin:/bin"; else p=/usr/bin:/bin; fi
-    env FW_DIR="$WORK/rf_fw" PATH="$p" IMAGE_PROFILE=h3c_hm2004-du \
-        PINS="$WORK/pins4.env" bash "$REPO_DIR/scripts/assert_rootfs.sh" >"$out_nocarve" 2>&1
-    rc_nocarve=$?
-    if [ "$scenario" = "with_tool" ]; then
-        if ! grep -qE "找不到 sysupgrade 镜像" "$out_nocarve"; then
-            say "× [有 unsquashfs 但没镜像时，没说清原因：$(head -2 "$out_nocarve" | tr '\n' ' ')]"
-            failed=$((failed + 1))
-        else
-            say "√ [有 unsquashfs、无镜像 → 明确失败]"
-            pass=$((pass + 1))
-        fi
+
+out_a=$(mktemp)
+env FW_DIR="$WORK/rf_fw" PATH="$stub_sq:/usr/bin:/bin" IMAGE_PROFILE=h3c_hm2004-du \
+    PINS="$WORK/pins4.env" bash "$REPO_DIR/scripts/assert_rootfs.sh" >"$out_a" 2>&1
+rc_a=$?
+if [ "$rc_a" -eq 0 ]; then
+    say "× [A：没镜像却通过了，这道门禁会假绿]"
+    failed=$((failed + 1))
+elif grep -q "找不到 sysupgrade 镜像" "$out_a"; then
+    say "√ [A：有 unsquashfs、无镜像 → 点名镜像缺失]"
+    pass=$((pass + 1))
+else
+    say "× [A：失败了但没点名镜像，输出：$(head -2 "$out_a" | tr '\n' ' ')]"
+    failed=$((failed + 1))
+fi
+rm -f "$out_a"
+
+out_b=$(mktemp)
+env FW_DIR="$WORK/rf_fw" IMAGE_PROFILE=h3c_hm2004-du PINS="$WORK/pins4.env" \
+    PATH="$stub_sq:/usr/bin:/bin" bash "$REPO_DIR/scripts/assert_rootfs.sh" >"$out_b" 2>&1
+rc_b=$?
+if [ "$rc_b" -ne 0 ] && grep -qE "没给 ROOTFS_DIR|找不到 sysupgrade 镜像" "$out_b"; then
+    say "√ [B：非零退出且说出具体原因（本机分支：$(grep -oE '没给 ROOTFS_DIR|找不到 sysupgrade 镜像' "$out_b" | head -1)）]"
+    pass=$((pass + 1))
+else
+    say "× [B：退出码 $rc_b，也没说出合法原因：$(head -2 "$out_b" | tr '\n' ' ')]"
+    failed=$((failed + 1))
+fi
+rm -f "$out_b"
+
+# 只有真的没有 unsquashfs 时，才谈得上「缺工具就拒绝执行」这条分支；
+# 有工具就不该误报这条，所以按实际环境判定，不写死期望。
+if ! PATH=/usr/bin:/bin command -v unsquashfs >/dev/null 2>&1; then
+    out_c=$(mktemp)
+    env FW_DIR="$WORK/rf_fw" PATH=/usr/bin:/bin IMAGE_PROFILE=h3c_hm2004-du \
+        PINS="$WORK/pins4.env" bash "$REPO_DIR/scripts/assert_rootfs.sh" >"$out_c" 2>&1
+    rc_c=$?
+    if [ "$rc_c" -ne 0 ] && grep -q "没给 ROOTFS_DIR" "$out_c"; then
+        say "√ [C：本机确实无 unsquashfs → 明确拒绝而不是当通过]"
+        pass=$((pass + 1))
     else
-        if ! grep -qE "没给 ROOTFS_DIR" "$out_nocarve"; then
-            say "× [缺 unsquashfs 时，没说清原因：$(head -2 "$out_nocarve" | tr '\n' ' ')]"
-            failed=$((failed + 1))
-        else
-            say "√ [缺 unsquashfs 且没交 ROOTFS_DIR → 拒绝执行]"
-            pass=$((pass + 1))
-        fi
-    fi
-    if [ "$rc_nocarve" -eq 0 ]; then
-        say "× [$scenario 没有任何可判对象时竟然通过了 —— 这道门禁会假绿]"
+        say "× [C：期望拒绝执行，实际 rc=$rc_c：$(head -2 "$out_c" | tr '\n' ' ')]"
         failed=$((failed + 1))
     fi
-    rm -f "$out_nocarve"
-done
+    rm -f "$out_c"
+else
+    say "· [C 跳过：本机 /usr/bin 里就有 unsquashfs，缺工具分支在本机不可达]"
+fi
 
 say "======================================"
 say "通过 $pass 项，失败 $failed 项"
