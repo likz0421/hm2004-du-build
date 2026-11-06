@@ -204,7 +204,7 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
 * FTTR 公开 feed 的四个包名、`KCONFIG` 指向不存在的内核符号、驱动要的 GPIO con_id
   （`clk/data/nconfig/rst/status/conf-done`）与 ponwrt DTS 的 `fpga-*-gpios` 不一致。
 * 引擎的 recipe 校验程序与阶段列表（`tests/check_recipes.sh` 直接从 `recipe.sh` 抽取后运行）。
-* 本仓库的门禁脚本：`tests/dryrun.sh` 61 项正反分支全过（假目录树 + `dtc`/`readelf` PATH 桩）。
+* 本仓库的门禁脚本：`tests/dryrun.sh` 62 项正反分支全过（假目录树 + `dtc`/`readelf` PATH 桩）。
 
 **未验证（要说清楚，别当成已经成了）**
 
@@ -250,11 +250,18 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
        `wait_queue_head_t` 却没 include 对应头；`fmcs.c` 恰好自己先包含了 `cdev.h` 才显得没事，
        换一个编译单元就崩。这是头文件自含性问题，不是某个 .c 的问题。
 
-     三处由 `patches/fmcs-kernel6.18-adapt.patch` 一次修掉：本地实现语义相同的
+     三处由 `patches/fmcs-kernel6.18-adapt.patch` 一次修掉（3 个文件、6 个 hunk）：本地实现语义相同的
      `fmcs_no_llseek()`（返回 `-ESPIPE`，与内核原函数一致）、`name` 改 `strscpy(...)`、
      头文件补 `linux/cdev.h` / `linux/atomic.h` / `linux/wait.h`。
+     - 同一场构建的收尾还报了一条：`ERROR: info field 'version' has invalid value:
+       package version is invalid`。原因是上游直接拿驱动版本串原值
+       `fmcs.h:23 #define FMCS_DRV_VERSION "V2024-0418-0001"` 当 `PKG_VERSION`，
+       而 apk-tools 的版本格式不接受字母开头的组件。补丁追加一行 make 侧规范化
+       `PKG_VERSION:=$(subst -,.,$(patsubst V%,%,$(PKG_VERSION)))` → `2024.0418.0001`，
+       不动驱动里的版本串本身。（其余两个包 `1.0.0` / `1` 本来就合法，已逐个查过。）
+
      补丁用 `patch --fuzz=0` 打，feed 源码一漂移就当场失败，绝不容忍"凑合打上"；
-     `apply.sh` 打完还要过三条自检。
+     `apply.sh` 打完还要过四条自检（含版本号那行），`assert_prebuild.sh` 在构建前也核对同样的四点。
    * 驱动要 `clk-gpios`/`data-gpios`/…，ponwrt 的 DTS 给的是 `fpga-clk-gpios`/`fpga-data-gpios`，
      con_id 对不上 → probe 拿不到线。这是**硬件走线未确认**，不是编译问题，
      所以由 `check_fttr_dts.sh` 在产物归档后再拦，不自动改设备树（改就是猜引脚）。

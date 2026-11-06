@@ -68,29 +68,39 @@ fi
 #                     —— 头文件用了 struct cdev / atomic_t / wait_queue_head_t，
 #                     却没 include 对应头；fmcs.c 恰好先包含了 cdev.h 所以它编得过，
 #                     换个编译单元就崩。修法是把头文件补自含（这是头文件该有的样子）。
+#   同一场收尾时：.ko 能编了，打包却报
+#                     ERROR: info field 'version' has invalid value:
+#                     package version is invalid
+#                     —— 上游把驱动版本串原值 V2024-0418-0001 当 PKG_VERSION 用，
+#                     而 apk-tools 的版本格式不接受字母开头的组件。补丁追加一行
+#                     make 侧规范化（patsubst 去前导 V、subst 把 - 换成 .），
+#                     得到 2024.0418.0001；驱动真实版本仍由 fmcs.h 决定，不改它本身。
 # 对应文档「二、约束：驱动补丁要适配当前内核版本」。补丁用 --fuzz=0：
 # feed 一漂移就失败，绝不容忍"上下文对不上也硬打"。
 SRC="$BUILD_DIR/feeds/hm2004/original/driver/fmcs.c"
 HDR="$BUILD_DIR/feeds/hm2004/original/driver/fmcs.h"
+PKG="$BUILD_DIR/feeds/hm2004/package/fttr-fmcs/Makefile"
 PATCH="$RECIPE_DIR/patches/fmcs-kernel6.18-adapt.patch"
-for f in "$SRC" "$HDR" "$PATCH"; do
+for f in "$SRC" "$HDR" "$PKG" "$PATCH"; do
     if [ ! -f "$f" ]; then
         echo "fttr: 期待的文件不存在：$f" >&2
         exit 1
     fi
 done
 
-if grep -q 'fmcs_no_llseek' "$SRC" && grep -q 'include <linux/cdev.h>' "$HDR"; then
-    echo "fttr: 驱动源码已打过 6.18 适配补丁，跳过"
+if grep -q 'fmcs_no_llseek' "$SRC" && grep -q 'include <linux/cdev.h>' "$HDR" &&
+    grep -q 'patsubst V%' "$PKG"; then
+    echo "fttr: 驱动源码与包定义已打过适配补丁，跳过"
 else
     if ! (cd "$BUILD_DIR" && patch -p1 -N --fuzz=0 -i "$PATCH"); then
-        echo "× fttr: 6.18 适配补丁打不上（--fuzz=0，上下文必须逐行对得上）——" >&2
-        echo "  feed 的 fmcs.c / fmcs.h 变了。要重新核对这几处再重生成补丁：" >&2
+        echo "× fttr: 适配补丁打不上（--fuzz=0，上下文必须逐行对得上）——" >&2
+        echo "  feed 的 fmcs.c / fmcs.h / fttr-fmcs/Makefile 变了。要重新核对：" >&2
         echo "    no_llseek（已删）、genl_family.name（数组不是指针）、" >&2
-        echo "    fmcs.h 里 struct cdev / atomic_t / wait_queue_head_t 的自含头" >&2
+        echo "    fmcs.h 里 struct cdev / atomic_t / wait_queue_head_t 的自含头、" >&2
+        echo "    PKG_VERSION 对 apk 版本格式是否合法" >&2
         exit 1
     fi
-    echo "fttr: 已应用 6.18 适配补丁（fmcs.c + fmcs.h）"
+    echo "fttr: 已应用适配补丁（fmcs.c + fmcs.h + fttr-fmcs/Makefile）"
 fi
 
 # ---- 4) 自检：确认每一处报错点真的被改掉 ----
@@ -104,6 +114,10 @@ if ! grep -q 'strscpy(family->name' "$SRC"; then
 fi
 if ! grep -q 'include <linux/cdev.h>' "$HDR"; then
     echo "fttr: 自检失败，fmcs.h 仍不自含：用 struct cdev 却不 include linux/cdev.h" >&2
+    exit 1
+fi
+if ! grep -q 'patsubst V%' "$PKG"; then
+    echo "fttr: 自检失败，PKG_VERSION 没做规范化：V2024-0418-0001 会被 apk 判 version invalid" >&2
     exit 1
 fi
 

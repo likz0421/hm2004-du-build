@@ -148,11 +148,17 @@ static loff_t fmcs_no_llseek(struct file *file, loff_t offset, int whence)
 EOF
 
     # apply.sh 处理后的形态（没有 KCONFIG 行、驱动是 obj-m）
-    mkdir -p "$dir/package/feeds/hm2004/fttr-fmcs"
+    mkdir -p "$dir/package/feeds/hm2004/fttr-fmcs" "$dir/feeds/hm2004/package/fttr-fmcs"
     cat >"$dir/package/feeds/hm2004/fttr-fmcs/Makefile" <<'EOF'
 define KernelPackage/fttr-fmcs
   FILES:=$(PKG_BUILD_DIR)/fttr-fmcs.ko
 endef
+EOF
+    cat >"$dir/feeds/hm2004/package/fttr-fmcs/Makefile" <<'EOF'
+FTTR_SOURCE_ROOT:=$(TOPDIR)/feeds/hm2004/original
+PKG_VERSION:=$(shell sed -n 's/^#define FMCS_DRV_VERSION[[:space:]]*"\(.*\)"/\1/p' $(FTTR_SOURCE_ROOT)/driver/fmcs.h)
+PKG_VERSION:=$(subst -,.,$(patsubst V%,%,$(PKG_VERSION)))
+PKG_RELEASE:=1
 EOF
     cat >"$dir/feeds/hm2004/original/driver/Makefile" <<'EOF'
 obj-$(CONFIG_FTTR_FMCS)		+= fttr-fmcs.o
@@ -458,6 +464,11 @@ sed -i '/^#include <linux\/cdev.h>$/d' "$B/feeds/hm2004/original/driver/fmcs.h"
 run_expect fail "头文件不自含要拦" "fmcs.h 不自含" prebuild
 sed -i '1i #include <linux/cdev.h>' "$B/feeds/hm2004/original/driver/fmcs.h"
 
+sed -i '/patsubst V%/d' "$B/feeds/hm2004/package/fttr-fmcs/Makefile"
+run_expect fail "版本号没规范化要拦" "package version is invalid" prebuild
+sed -i '/^PKG_RELEASE/i PKG_VERSION:=$(subst -,.,$(patsubst V%,%,$(PKG_VERSION)))' \
+    "$B/feeds/hm2004/package/fttr-fmcs/Makefile"
+
 run_expect pass "补回之后重新全绿" "" prebuild
 
 commit_here "$B" drift --allow-empty
@@ -641,7 +652,7 @@ run_expect fail "SHA 不是 40 位要拦" "不是 40 位十六进制" \
     bash "$REPO_DIR/overlay/recipes/feed_pins/apply.sh"
 
 say
-say "### 场景 7：fttr 的 6.18 适配补丁（fmcs.c + fmcs.h）"
+say "### 场景 7：fttr 的 6.18/apk 适配补丁（fmcs.c + fmcs.h + fttr-fmcs Makefile）"
 # 夹具不复制第三方源码，而是从补丁自身重建：按 +++ 头切分文件，
 # 每个文件取它自己那些 hunk 的上下文行与删除行。补丁和测试因此永远同步。
 FT=$WORK/fttrpatch
@@ -664,10 +675,12 @@ rebuild_from_patch() { # $1=补丁 $2=输出根
 }
 rm -rf "$FT/src"
 rebuild_from_patch "$RECIPE_SRC/patches/fmcs-kernel6.18-adapt.patch" "$FT/src"
-cp -f "$FT/src/feeds/hm2004/original/driver/fmcs.c" "$FT/feeds/hm2004/original/driver/fmcs.c"
-cp -f "$FT/src/feeds/hm2004/original/driver/fmcs.h" "$FT/feeds/hm2004/original/driver/fmcs.h"
-if [ ! -s "$FT/feeds/hm2004/original/driver/fmcs.c" ] || [ ! -s "$FT/feeds/hm2004/original/driver/fmcs.h" ]; then
-    say "× [没能从补丁重建两份夹具文件，后面的判定不可信]"
+cp -Rf "$FT/src/feeds/." "$FT/feeds/"
+: # 三份文件随目录一起拷
+if [ ! -s "$FT/feeds/hm2004/original/driver/fmcs.c" ] ||
+    [ ! -s "$FT/feeds/hm2004/original/driver/fmcs.h" ] ||
+    [ ! -s "$FT/feeds/hm2004/package/fttr-fmcs/Makefile" ]; then
+    say "× [没能从补丁重建出三份夹具文件，后面的判定不可信]"
     failed=$((failed + 1))
 fi
 printf 'define KernelPackage/fttr-fmcs\n  KCONFIG:=CONFIG_FTTR_FMCS=m CONFIG_FTTR_FMCS_LOAD_AT_PROBE=y\nendef\n' \
@@ -693,8 +706,8 @@ run_expect pass "第二次跑不重复打" "" run_fttr
 cp "$RECIPE_SRC/patches/fmcs-kernel6.18-adapt.patch" "$WORK/patch.copy"
 rm -rf "$FT/src"
 rebuild_from_patch "$WORK/patch.copy" "$FT/src"
-cp -f "$FT/src/feeds/hm2004/original/driver/fmcs.c" "$FT/feeds/hm2004/original/driver/fmcs.c"
-cp -f "$FT/src/feeds/hm2004/original/driver/fmcs.h" "$FT/feeds/hm2004/original/driver/fmcs.h"
+cp -Rf "$FT/src/feeds/." "$FT/feeds/"
+: # 三份文件随目录一起拷
 sed -i '/^#include <linux\/netdevice.h>$/d' "$FT/feeds/hm2004/original/driver/fmcs.h"
 printf 'define KernelPackage/fttr-fmcs\n  KCONFIG:=CONFIG_FTTR_FMCS=m CONFIG_FTTR_FMCS_LOAD_AT_PROBE=y\nendef\n' \
     >"$FT/package/feeds/hm2004/fttr-fmcs/Makefile"

@@ -218,6 +218,17 @@ if [ "$WITH_FTTR" = "1" ]; then
             missing+=("找不到 fmcs.h：$fttr_hdr")
             fail=1
         fi
+        # apk-tools 不接受字母开头的版本组件，上游直接拿驱动版本串当 PKG_VERSION。
+        fttr_pkg="$BUILD_DIR/feeds/hm2004/package/fttr-fmcs/Makefile"
+        if [ -f "$fttr_pkg" ]; then
+            grep -q 'patsubst V%' "$fttr_pkg" || {
+                missing+=("fttr-fmcs 的 PKG_VERSION 没规范化：V2024-0418-0001 会被 apk 判 package version is invalid")
+                fail=1
+            }
+        else
+            missing+=("找不到 fttr-fmcs 包定义：$fttr_pkg")
+            fail=1
+        fi
     else
         missing+=("找不到 feed 里的 fmcs.c：$fttr_src")
         fail=1

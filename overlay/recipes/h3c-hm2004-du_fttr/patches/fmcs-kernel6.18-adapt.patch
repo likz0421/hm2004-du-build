@@ -1,6 +1,6 @@
 diff -ru a/feeds/hm2004/original/driver/fmcs.c b/feeds/hm2004/original/driver/fmcs.c
 --- a/feeds/hm2004/original/driver/fmcs.c
-+++ b/feeds/hm2004/original/driver/fmcs.c	2026-11-06 12:56:59.124796900 +0800
++++ b/feeds/hm2004/original/driver/fmcs.c	2026-11-06 20:32:44.364252700 +0800
 @@ -31,6 +31,7 @@
  #include <linux/of.h>
  #include <linux/platform_device.h>
@@ -42,7 +42,7 @@ diff -ru a/feeds/hm2004/original/driver/fmcs.c b/feeds/hm2004/original/driver/fm
  		family->policy		= fmcs_genl_policy;
 diff -ru a/feeds/hm2004/original/driver/fmcs.h b/feeds/hm2004/original/driver/fmcs.h
 --- a/feeds/hm2004/original/driver/fmcs.h
-+++ b/feeds/hm2004/original/driver/fmcs.h	2026-11-06 12:56:44.163678900 +0800
++++ b/feeds/hm2004/original/driver/fmcs.h	2026-11-06 20:32:44.422763500 +0800
 @@ -9,12 +9,15 @@
  #ifndef _FMCS_H
  #define _FMCS_H
@@ -59,3 +59,19 @@ diff -ru a/feeds/hm2004/original/driver/fmcs.h b/feeds/hm2004/original/driver/fm
  #include <linux/workqueue.h>
  
  #include "fmcs_uapi.h"
+diff -ru a/feeds/hm2004/package/fttr-fmcs/Makefile b/feeds/hm2004/package/fttr-fmcs/Makefile
+--- a/feeds/hm2004/package/fttr-fmcs/Makefile
++++ b/feeds/hm2004/package/fttr-fmcs/Makefile	2026-11-06 20:34:03.245697900 +0800
+@@ -7,6 +7,12 @@
+ PKG_NAME:=fttr-fmcs
+ PKG_VERSION:=$(shell sed -n 's/^#define FMCS_DRV_VERSION[[:space:]]*"\(.*\)"/\1/p' \
+ 	$(FTTR_SOURCE_ROOT)/driver/fmcs.h)
++# 上游那行 PKG_VERSION 取的是驱动版本串原值（V2024-0418-0001）。apk-tools 的版本
++# 格式不接受字母开头的组件，打包阶段会直接报 "package version is invalid"，所以
++# 在这里做一次规范化：去前导 V、把 - 换成 .。驱动真实版本仍由 fmcs.h
++# 里的 FMCS_DRV_VERSION 决定，不改它本身。
++PKG_VERSION:=$(subst -,.,$(patsubst V%,%,$(PKG_VERSION)))
++
+ PKG_RELEASE:=1
+ PKG_LICENSE:=GPL-2.0-only
+ PKG_MAINTAINER:=HM2004 FTTR maintainers
