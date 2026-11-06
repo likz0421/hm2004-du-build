@@ -137,6 +137,11 @@ if [ -n "$manifest" ]; then
     for p in honk luci-app-honk kmod-sched-core kmod-sched-bpf kmod-veth kmod-nft-queue; do
         in_manifest "$p"
     done
+    # 主图。选包在 .config 里过检不代表真进了 rootfs——主题是装机产物，
+    # 只有清单能证明它被装进去（Vantage 那次就是靠清单确认的）。
+    for p in luci-theme-vantage luci-i18n-vantage-theme-zh-cn; do
+        in_manifest "$p"
+    done
     if [ "$WITH_FTTR" = "1" ]; then
         for p in kmod-fttr-fmcs fttr-tools hm2004-fttr-firmware luci-app-h3c-fttr; do
             in_manifest "$p"

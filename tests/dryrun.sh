@@ -245,6 +245,8 @@ kmod-fttr-fmcs - 1.0 - aarch64_cortex-a53
 fttr-tools - 1.0.0 - aarch64_cortex-a53
 hm2004-fttr-firmware - 1 - aarch64_cortex-a53
 luci-app-h3c-fttr - 1 - all
+luci-theme-vantage - 1.0.15 - all
+luci-i18n-vantage-theme-zh-cn - 1.0.15 - all
 EOF
 }
 
@@ -507,6 +509,10 @@ sed -i '/^honk /d;/^luci-app-honk /d' "$FW"/*rootfs.manifest
 run_expect fail "清单里没 honk 要拦" "honk" artifacts
 sed -i '$a honk - 2026.11.06 - aarch64_cortex-a53\nluci-app-honk - 2026.11.06 - all' \
     "$FW"/ponwrt-airoha-an7581-h3c_hm2004-du-rootfs.manifest
+
+sed -i '/^luci-theme-vantage /d' "$FW"/*rootfs.manifest
+run_expect fail "清单里没 Vantage 主题要拦" "luci-theme-vantage" artifacts
+echo "luci-theme-vantage - 1.0.15 - all" >>"$FW"/ponwrt-airoha-an7581-h3c_hm2004-du-rootfs.manifest
 
 # 多 profile 场景：混进一份别的机型的清单，必须挑本机型那份
 printf 'nothing - 0 - all\n' >"$FW/openwrt-airoha-an7581-gemtek_w1700k-rootfs.manifest"
