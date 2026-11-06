@@ -206,6 +206,18 @@ if [ "$WITH_FTTR" = "1" ]; then
             missing+=("fmcs.c 还在给 genl_family.name 赋值：它是 char[GENL_NAMSIZ] 数组，编译会直接报错")
             fail=1
         fi
+        # 头文件不自含会让任何一个先 include fmcs.h 的编译单元崩在 struct cdev 上
+        # （实测构建 42126367809 的 fmcs_spi.o 就是这个）。
+        fttr_hdr="$BUILD_DIR/feeds/hm2004/original/driver/fmcs.h"
+        if [ -f "$fttr_hdr" ]; then
+            grep -q 'include <linux/cdev.h>' "$fttr_hdr" || {
+                missing+=("fmcs.h 不自含：用了 struct cdev 却没 include linux/cdev.h，fmcs_spi.o 会崩")
+                fail=1
+            }
+        else
+            missing+=("找不到 fmcs.h：$fttr_hdr")
+            fail=1
+        fi
     else
         missing+=("找不到 feed 里的 fmcs.c：$fttr_src")
         fail=1

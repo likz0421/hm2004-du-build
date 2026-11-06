@@ -196,7 +196,7 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
 * FTTR 公开 feed 的四个包名、`KCONFIG` 指向不存在的内核符号、驱动要的 GPIO con_id
   （`clk/data/nconfig/rst/status/conf-done`）与 ponwrt DTS 的 `fpga-*-gpios` 不一致。
 * 引擎的 recipe 校验程序与阶段列表（`tests/check_recipes.sh` 直接从 `recipe.sh` 抽取后运行）。
-* 本仓库的门禁脚本：`tests/dryrun.sh` 45 项正反分支全过（假目录树 + `dtc`/`readelf` PATH 桩）。
+* 本仓库的门禁脚本：`tests/dryrun.sh` 53 项正反分支全过（假目录树 + `dtc`/`readelf` PATH 桩）。
 
 **未验证（要说清楚，别当成已经成了）**
 
@@ -234,13 +234,19 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
    * 原包的 `KCONFIG:=CONFIG_FTTR_FMCS=m` 指向一个从未 source 进内核 Kconfig 树的符号，
      `.ko` 根本不会生成——`overlay/recipes/h3c-hm2004-du_fttr/apply.sh` 把它改成 out-of-tree
      的 `obj-m`，并补 `-DCONFIG_FTTR_FMCS_LOAD_AT_PROBE=1`（`fmcs.c:752` 的 `#ifdef` 需要它）。
-   * **驱动源码本身要适配 6.18**（这条是真实构建 42098806007 的日志打出来的，不是推测）：
-     `fmcs.c:636` 用了已被 v6.x 删除的 `no_llseek`，`fmcs.c:918` 给 `genl_family.name`
-     赋值而它在 `include/net/genetlink.h:80` 是 `char name[GENL_NAMSIZ]` 数组。
-     两处由 `patches/fmcs-kernel6.18-adapt.patch` 修掉：本地实现一个语义相同的
-     `fmcs_no_llseek()`（返回 `-ESPIPE`，与内核原来那个函数一字不差），
-     `name` 改成 `strscpy(..., sizeof(family->name))`。补丁用 `patch --fuzz=0` 打，
-     feed 源码一漂移就当场失败，绝不容忍"凑合打上"。
+   * **驱动源码本身要适配 6.18**（两处失败都由真实构建日志给出，不是推测）：
+     - 构建 42098806007：`fmcs.c:636` 用了已被 v6.x 删除的 `no_llseek`；`fmcs.c:918` 给
+       `genl_family.name` 赋值而它在 `include/net/genetlink.h:80` 是 `char[GENL_NAMSIZ]` 数组。
+     - 修完上面两处、`fmcs.o` 过了之后，构建 42126367809 在 `fmcs_spi.o` 又报
+       `fmcs.h:112 field 'cdev' has incomplete type`——头文件用了 `struct cdev`、`atomic_t`、
+       `wait_queue_head_t` 却没 include 对应头；`fmcs.c` 恰好自己先包含了 `cdev.h` 才显得没事，
+       换一个编译单元就崩。这是头文件自含性问题，不是某个 .c 的问题。
+
+     三处由 `patches/fmcs-kernel6.18-adapt.patch` 一次修掉：本地实现语义相同的
+     `fmcs_no_llseek()`（返回 `-ESPIPE`，与内核原函数一致）、`name` 改 `strscpy(...)`、
+     头文件补 `linux/cdev.h` / `linux/atomic.h` / `linux/wait.h`。
+     补丁用 `patch --fuzz=0` 打，feed 源码一漂移就当场失败，绝不容忍"凑合打上"；
+     `apply.sh` 打完还要过三条自检。
    * 驱动要 `clk-gpios`/`data-gpios`/…，ponwrt 的 DTS 给的是 `fpga-clk-gpios`/`fpga-data-gpios`，
      con_id 对不上 → probe 拿不到线。这是**硬件走线未确认**，不是编译问题，
      所以由 `check_fttr_dts.sh` 在产物归档后再拦，不自动改设备树（改就是猜引脚）。
