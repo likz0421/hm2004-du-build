@@ -23,7 +23,7 @@ overlay/                     盖到引擎上的差异（本仓库真正的产物
   deconfig/fragments/{ebpf_btf,honk,fttr}.config
   recipes/feed_pins|ebpf_btf|honk|hm2004_fttr_feed|h3c-hm2004-du_fttr|vantage_feed|luci_theme_vantage
 scripts/                     apply_overlay / preclone / load_signing_key
-                             assert_prebuild / assert_artifacts / check_fttr_dts
+                             assert_prebuild / assert_artifacts / assert_rootfs / check_fttr_dts
 tests/                       dryrun.sh（门禁的正反分支）/ check_recipes.sh
 .github/workflows/build.yml  唯一工作流
 ```
@@ -39,8 +39,16 @@ pins.env
                       └─ assert_prebuild.sh      构建设置核验：BTF / profile / feed pin / 装机包 / 密钥
                            └─ ./build.sh <目标>  完整编译
                                 └─ assert_artifacts.sh   认证物：镜像 / 内核 .config / vmlinux 的 .BTF 段 / manifest
-                                     └─ 产物归档 → check_fttr_dts.sh → Release
+                                     └─ 产物归档（先上传，任何门禁都不得让三小时的镜像消失）
+                                          └─ assert_rootfs.sh   抠出镜像里的 squashfs，看真实文件系统
+                                               └─ check_fttr_dts.sh → Release
 ```
+
+`assert_rootfs.sh` 是最后加的，因为它回答的问题是别人回答不了的：`.manifest` 是构建系统的
+记账，设备跑的是文件系统。它把镜像里的 squashfs 抠出来解包，直接判
+`/www/luci-static/vantage` 在不在、`30_luci-theme-vantage` 在不在而 `990_set_fluent_default`
+**必须不在**、中文 `.lmo` 在不在、`cls_bpf.ko`/`act_bpf.ko` 在不在 `/lib/modules/<ver>`、
+以及 `/etc/apk/keys` 里有没有公钥（决定设备端软件源能不能验签）。
 
 预检单独跑一次 `debug`，是为了让「配置根本没生效」这类问题在 20 分钟内暴露，而不是等 3 小时后
 在 `assert_artifacts.sh` 才红。代价是多跑一遍 feeds，约半小时。
@@ -196,7 +204,7 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
 * FTTR 公开 feed 的四个包名、`KCONFIG` 指向不存在的内核符号、驱动要的 GPIO con_id
   （`clk/data/nconfig/rst/status/conf-done`）与 ponwrt DTS 的 `fpga-*-gpios` 不一致。
 * 引擎的 recipe 校验程序与阶段列表（`tests/check_recipes.sh` 直接从 `recipe.sh` 抽取后运行）。
-* 本仓库的门禁脚本：`tests/dryrun.sh` 53 项正反分支全过（假目录树 + `dtc`/`readelf` PATH 桩）。
+* 本仓库的门禁脚本：`tests/dryrun.sh` 61 项正反分支全过（假目录树 + `dtc`/`readelf` PATH 桩）。
 
 **未验证（要说清楚，别当成已经成了）**
 

@@ -69,7 +69,7 @@ jobs:
         run: |
           sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
           # dwarves 提供 pahole，DEBUG_INFO_BTF 没有它就生不出 .BTF 段。
-          sudo -E apt -yqq install dwarves dos2unix jq openssl device-tree-compiler binutils
+          sudo -E apt -yqq install dwarves dos2unix jq openssl device-tree-compiler binutils squashfs-tools
           sudo -E apt -yqq clean
 
       - name: 计算输出名与日期
@@ -236,6 +236,13 @@ jobs:
           BUILD_DIR: ${{ github.workspace }}/engine/action_build
           FW_DIR: ${{ github.workspace }}/engine/firmware
           WITH_FTTR: ${{ inputs.with_fttr && '1' || '0' }}
+
+      - name: rootfs 内容核验（抠出 squashfs 看文件系统）
+        if: ${{ !inputs.preflight_only }}
+        run: bash "$GITHUB_WORKSPACE/scripts/assert_rootfs.sh"
+        env:
+          PINS: ${{ github.workspace }}/pins.env
+          FW_DIR: ${{ github.workspace }}/engine/firmware
 
       - name: 上传配置快照
         if: ${{ always() }}

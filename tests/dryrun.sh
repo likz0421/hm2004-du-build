@@ -701,6 +701,48 @@ printf 'define KernelPackage/fttr-fmcs\n  KCONFIG:=CONFIG_FTTR_FMCS=m CONFIG_FTT
 printf 'obj-$(CONFIG_FTTR_FMCS)\t\t+= fttr-fmcs.o\n' >"$FT/feeds/hm2004/original/driver/Makefile"
 run_expect fail "feed 源码漂移要拦" "打不上" run_fttr
 
+say
+say "### 场景 8：rootfs 内容核验（看文件系统，不看构建记账）"
+RG=$WORK/rootfs_good
+mkdir -p "$RG/www/luci-static/vantage/luci" "$RG/etc/uci-defaults" \
+    "$RG/usr/lib/lua/luci/i18n" "$RG/lib/modules/6.18.55" "$RG/etc/apk/keys"
+touch "$RG/www/luci-static/vantage/luci.js" \
+    "$RG/etc/uci-defaults/30_luci-theme-vantage" \
+    "$RG/usr/lib/lua/luci/i18n/vantage-theme.zh-cn.lmo" \
+    "$RG/lib/modules/6.18.55/cls_bpf.ko" "$RG/lib/modules/6.18.55/act_bpf.ko" \
+    "$RG/etc/apk/keys/hm2004.pub"
+mkdir -p "$WORK/rf_fw"
+check_rootfs() {
+    env FW_DIR="$WORK/rf_fw" ROOTFS_DIR="$RG" IMAGE_PROFILE=h3c_hm2004-du \
+        PINS="$WORK/pins4.env" bash "$REPO_DIR/scripts/assert_rootfs.sh"
+}
+run_expect pass "rootfs 内容齐" "" check_rootfs
+
+mv "$RG/www/luci-static/vantage" "$RG/www/luci-static/vantage.bak"
+run_expect fail "清单说装了但文件系统里没有要拦" "文件系统里没有" check_rootfs
+mv "$RG/www/luci-static/vantage.bak" "$RG/www/luci-static/vantage"
+
+printf '#!/bin/sh\n' >"$RG/etc/uci-defaults/990_set_fluent_default"
+run_expect fail "Fluent 默认脚本混进 rootfs 要拦" "起来还是 Fluent" check_rootfs
+rm -f "$RG/etc/uci-defaults/990_set_fluent_default"
+
+mv "$RG/usr/lib/lua/luci/i18n/vantage-theme.zh-cn.lmo" "$WORK/lmo.bak"
+run_expect fail "中文语言文件缺要拦" "界面会是英文" check_rootfs
+mv "$WORK/lmo.bak" "$RG/usr/lib/lua/luci/i18n/vantage-theme.zh-cn.lmo"
+
+rm -f "$RG/lib/modules/6.18.55/cls_bpf.ko"
+run_expect fail "TC 模块没进 rootfs 要拦" "cls_bpf.ko 不在" check_rootfs
+: >"$RG/lib/modules/6.18.55/cls_bpf.ko"
+
+rm -rf "$RG/etc/apk/keys"
+run_expect fail "apk 公钥没进镜像要拦" "/etc/apk/keys" check_rootfs
+mkdir -p "$RG/etc/apk/keys"; : >"$RG/etc/apk/keys/hm2004.pub"
+
+# 没有 unsquashfs 又没交 ROOTFS_DIR 时，必须拒绝执行而不是当成通过
+run_expect fail "缺 unsquashfs 时不许静默通过" "没给 ROOTFS_DIR" \
+    env FW_DIR="$WORK/rf_fw" PATH=/usr/bin:/bin IMAGE_PROFILE=h3c_hm2004-du \
+    PINS="$WORK/pins4.env" bash "$REPO_DIR/scripts/assert_rootfs.sh"
+
 say "======================================"
 say "通过 $pass 项，失败 $failed 项"
 [ "$failed" -eq 0 ] || exit 1
