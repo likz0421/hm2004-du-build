@@ -102,6 +102,10 @@ EOF
 }
 
 KERNEL_DIR_REL=build_dir/target-aarch64_cortex-a53_musl/linux-airoha_an7581/linux-6.18.55
+# KDIR 这一层（= KERNEL_BUILD_DIR）才是镜像真正取 DTB 的地方：
+# include/image.mk:691 `$(KDIR)/image-$(1).dtb`，an7581.mk:329 用的就是它。
+KDIR_REL=${KERNEL_DIR_REL%/linux-6.18.55}
+DTS_NAME=an7581-h3c-hm2004-du
 
 make_build_tree() {
     local dir=$1
@@ -137,6 +141,16 @@ EOF
 	ret = fmcs_bitstream_get_gpio(dev, "nconfig", GPIOD_OUT_HIGH, &bs->nconfig);
 	ret = fmcs_bitstream_get_gpio(dev, "clk", GPIOD_OUT_LOW, &bs->clk);
 	ret = fmcs_bitstream_get_gpio(dev, "data", GPIOD_OUT_LOW, &bs->data);
+EOF
+    # fmcs_spi.c 的写法第一个参数是 t->dev，不是 dev——门禁得认这种形式，
+    # 否则位敲那四条线（真实驱动里缺得最多的四条）会被整个漏掉。
+    cat >"$dir/feeds/hm2004/original/driver/fmcs_spi.c" <<'EOF'
+	t->sck = devm_gpiod_get_optional(t->dev, "sck", GPIOD_OUT_LOW);
+	t->mosi = devm_gpiod_get_optional(t->dev, "mosi", GPIOD_OUT_LOW);
+	t->miso = devm_gpiod_get_optional(t->dev, "miso", GPIOD_IN);
+	t->cs = devm_gpiod_get_optional(t->dev, "cs", GPIOD_OUT_LOW);
+	if (!t->sck)
+		return -ENODEV;
 EOF
     cat >"$dir/feeds/hm2004/original/driver/fmcs.c" <<'EOF'
 static loff_t fmcs_no_llseek(struct file *file, loff_t offset, int whence)
@@ -240,7 +254,8 @@ CONFIG_DEBUG_INFO_BTF=y
 # CONFIG_DEBUG_INFO_REDUCED is not set
 EOF
     : >"$kdir/vmlinux"
-    printf 'dtb\n' >"$kdir/arch/arm64/boot/dts/airoha/an7581-h3c-hm2004-du.dtb"
+    printf 'dtb\n' >"$dir/$KDIR_REL/image-$DTS_NAME.dtb"
+    printf 'dtb-fallback\n' >"$kdir/arch/arm64/boot/dts/airoha/$DTS_NAME.dtb"
 }
 
 make_fw_dir() {
@@ -318,6 +333,10 @@ fmcs_dts_good() {
 		data-gpios = <&en7581_pinctrl 30 0>;
 		status-gpios = <&en7581_pinctrl 26 0>;
 		conf-done-gpios = <&en7581_pinctrl 27 0>;
+		sck-gpios = <&en7581_pinctrl 31 0>;
+		mosi-gpios = <&en7581_pinctrl 32 0>;
+		miso-gpios = <&en7581_pinctrl 33 0>;
+		cs-gpios = <&en7581_pinctrl 21 0>;
 		status = "okay";
 	};
 };
@@ -329,6 +348,7 @@ fmcs_dts_missing() {
 / {
 	fmcs {
 		compatible = "h3c,fmcs";
+		fpga-spi-int-gpios = <&en7581_pinctrl 23 0>;
 		fpga-clk-gpios = <&en7581_pinctrl 29 0>;
 		fpga-data-gpios = <&en7581_pinctrl 30 0>;
 		status = "okay";
@@ -570,6 +590,50 @@ make_dtc_stub "$STUBS_BAD" "$WORK/bad.dts"
 
 run_expect pass "设备树给了驱动要的线" "" check_dts "$STUBS_OK"
 run_expect fail "线名对不上要拦" "clk-gpios" check_dts "$STUBS_BAD"
+
+# 位敲那四条也必须算进来：只给配置线、不给 sck，真实驱动在 fmcs_spi.c:335 就 -ENODEV。
+# 这条同时盯住解析形式——fmcs_spi.c 传的是 t->dev 而不是 dev，按字面量 "dev," 匹配会漏。
+fmcs_dts_good | grep -v 'sck-gpios' > "$WORK/nosck.dts"
+STUBS_NOSCK=$WORK/stubs_nosck
+make_dtc_stub "$STUBS_NOSCK" "$WORK/nosck.dts"
+run_expect fail "只缺 t->dev 形式要的 sck 也要拦" "sck-gpios" check_dts "$STUBS_NOSCK"
+
+# DTB 落点判据（构建 42286251323 的教训：按 arch/arm64/boot/dts 找，实产物在
+# KDIR 层的 image-<dts>.dtb，门禁自己跑不起来却报成"拦住"）。
+out_dtbpick=$(mktemp)
+env BUILD_DIR="$B" PATH="$STUBS_OK:$PATH" bash "$REPO_DIR/scripts/check_fttr_dts.sh" >"$out_dtbpick" 2>&1
+if grep -q "审的 DTB：.*linux-airoha_an7581/image-$DTS_NAME.dtb" "$out_dtbpick"; then
+    say "√ [优先审 KDIR 层 image-<dts>.dtb，即镜像实际嵌入的那份]"
+    pass=$((pass + 1))
+else
+    say "× [没走真实落点，实际输出：$(head -2 "$out_dtbpick" | tr '\n ' ' ')]"
+    failed=$((failed + 1))
+fi
+mv "$B/$KDIR_REL/image-$DTS_NAME.dtb" "$B/$KDIR_REL/image-$DTS_NAME.dtb.bak"
+out_dtbpick2=$(mktemp)
+env BUILD_DIR="$B" PATH="$STUBS_OK:$PATH" bash "$REPO_DIR/scripts/check_fttr_dts.sh" >"$out_dtbpick2" 2>&1
+if grep -q "审的 DTB：.*arch/arm64/boot/dts/airoha/$DTS_NAME.dtb" "$out_dtbpick2"; then
+    say "√ [真实落点缺失时退到内核 dts 目录兜底，并说明用的是哪份]"
+    pass=$((pass + 1))
+else
+    say "× [兜底路径没生效，实际 rc 输出：$(head -2 "$out_dtbpick2" | tr '\n ' ' ')]"
+    failed=$((failed + 1))
+fi
+mv "$B/$KDIR_REL/image-$DTS_NAME.dtb.bak" "$B/$KDIR_REL/image-$DTS_NAME.dtb"
+rm -f "$B/$KDIR_REL/image-$DTS_NAME.dtb" "$B/$KERNEL_DIR_REL/arch/arm64/boot/dts/airoha/$DTS_NAME.dtb"
+out_dtbpick3=$(mktemp)
+env BUILD_DIR="$B" PATH="$STUBS_OK:$PATH" bash "$REPO_DIR/scripts/check_fttr_dts.sh" >"$out_dtbpick3" 2>&1
+rc3b=$?
+if [ "$rc3b" -ne 0 ] && grep -q "找不到编译出的 DTB" "$out_dtbpick3" &&
+    grep -q "image-$DTS_NAME.dtb" "$out_dtbpick3" && grep -q "boot/dts" "$out_dtbpick3"; then
+    say "√ [两条落点都没有时报失败，并把找过的位置逐条列出]"
+    pass=$((pass + 1))
+else
+    say "× [期望列出两个候选位置，实际 rc=$rc3b：$(head -4 "$out_dtbpick3" | tr '\n ' ' ')]"
+    failed=$((failed + 1))
+fi
+printf 'dtb\n' >"$B/$KDIR_REL/image-$DTS_NAME.dtb"
+rm -f "$out_dtbpick" "$out_dtbpick2" "$out_dtbpick3"
 
 # 没有可解析对象时不许静默通过。dtc 在不在取决于机器（CI 装了 device-tree-compiler），
 # 所以只要求「非零退出 + 说出合法原因之一」，不锁死措辞；

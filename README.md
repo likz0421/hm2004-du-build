@@ -284,9 +284,41 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
      `host-compile` `package/utils/lua`，而那个 host 包单独编不了（0.09 秒失败，
      编译器根本没起来），于是真正要测的 miniolt 一行都没编到，还把整轮判红。
      **会误报的加速比没有加速更糟**，该步已删除，判定交回正常构建流程。
-   * 驱动要 `clk-gpios`/`data-gpios`/…，ponwrt 的 DTS 给的是 `fpga-clk-gpios`/`fpga-data-gpios`，
-     con_id 对不上 → probe 拿不到线。这是**硬件走线未确认**，不是编译问题，
-     所以由 `check_fttr_dts.sh` 在产物归档后再拦，不自动改设备树（改就是猜引脚）。
+   * **编译与打包这一层已经全过了，过不去的是运行时。** 驱动按 con_id 取线，一共 10 条：
+     `original/driver/fmcs_load.c:300-315` 要 nconfig / rst / clk / data / status / conf-done，
+     `original/driver/fmcs_spi.c:321-324` 还要位敲 SPI 的 sck / mosi / miso / cs
+     （位流是拿 GPIO 一根根敲进 FPGA 的）。而 ponwrt 的
+     `target/linux/airoha/dts/an7581-h3c-hm2004-du.dts:125-127` 只给了三条，名字还带 `fpga-` 前缀：
+
+     | 驱动要的 con_id | 这份 DTS 给的 | 结果 |
+     | --- | --- | --- |
+     | clk(29) / data(30) | `fpga-clk-gpios` / `fpga-data-gpios` | 编号对得上、名字对不上，取不到 |
+     | nconfig / rst / status / conf-done | 没有 | 取不到 |
+     | sck / mosi / miso / cs | 只有 `fpga-spi-int-gpios`(23)，驱动不问这个 | 取不到 |
+
+     后果不是"功能弱一点"：`devm_gpiod_get_optional` 取不到给 NULL 不报错，但
+     `fmcs_spi.c:335` 见 sck 为空直接返回 -ENODEV，而它是 `fmcs.c:729 fmcs_probe_common()`
+     的第一步——驱动绑不上设备，`/dev/fmcs` 都不会出现。
+     就算这 10 条补齐也只是走到第二步：寄存器通路（`miniolt read/write fpga`，M-OLT 控制的入口）
+     走 0x1fa10000 上的 chip select 1，那个控制器在这棵树里归 `spi-airoha-snfi`，而原厂用的是它
+     从没实现过的 Manual Mode——feed 的 `docs/REVERSE_ENGINEERING.md` §3.1-3.6 和整篇
+     `docs/NEXT_STEPS.md` 讲的就是这件事。所以这是**驱动 + 硬件**的活，不是构建配置的活。
+   * feed 里其实带了那份设备树补丁 `original/patches/0001-arm64-dts-airoha-hm2004-du-enable-fmcs.patch`，
+     六个配置脚的编号都给了（nconfig 5 / rst 22 / clk 29 / data 30 / status 27 / conf-done 28，
+     从原厂 DTB 里 `fpga_load.ko` 硬编码的 GPIO 位推出来）。这里**没有**打上去，理由是作者自己写的
+     （feed `README.md:55-59`）：「the GPIO transport pins are not identified in the stock device tree.
+     Do not enable the FMCS node or apply … until the transport wiring is resolved」——推算不等于实测，
+     打上去还缺位敲那四条，而且打了也没有寄存器通路。要试就在自己板子上打，先核对这几只脚与
+     `pon_tx_disable`、leds、keys 的复用冲突。
+     `check_fttr_dts.sh` 因此在产物归档之后才拦，绝不自动改设备树：改就是替上游把「未实测」变成「已发布」。
+
+     这道闸自己也在构建 42286251323 报过一次假案，值得记：它按 `arch/arm64/boot/dts/airoha/*.dtb`
+     找 DTB，什么都没找到，于是把「门禁跑不了」报成了「门禁拦住」。真实落点是
+     `$(KDIR)/image-<dts>.dtb`，即 `build_dir/target-*/linux-airoha_an7581/image-an7581-h3c-hm2004-du.dtb`
+     ——依据是 `include/image.mk:40`（KDIR=KERNEL_BUILD_DIR）、`:691`（`$(KDIR)/image-$(1).dtb`）和
+     `target/linux/airoha/image/an7581.mk:317/329`（DEVICE_DTS 与 `fit gzip` 用的就是它）。
+     本地夹具当初按我猜的路径造文件，所以 68 条用例全绿却拦不住这个错——**夹具要照上游的构造规则造，
+     不能照我对布局的印象造**。现在主路径 + 兜底路径 + 「两条都没有就逐条列出找过哪里」都有用例。
    * `moltd` / Rust 版控制器（ACS、MQTT、HL202 等分支）公开无处可取，只有 miniolt 一个命令行。
    * 位流是原厂提取的二进制，feed 与作者研究库都写明「未确认可以再分发」。往公开 Release
      里发镜像前，这一条得你自己判断。
@@ -300,8 +332,13 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
    现在 ini 把它移到 `DISABLE_RECIPES`（引擎里 DISABLE 的优先级高于 ADD 与 recipe 集合），
    并且 `assert_prebuild.sh` 直接核对最终值，20 分钟内就会报错，而不是等两小时。
    代价：多编一个 initramfs 镜像、多几分钟到十几分钟；`sysupgrade.itb` 内容不受影响。
-3. **默认 `with_fttr=true` 会让构建红。** 这是刻意的：文档要求「fttr 插件可用」，而现在它做不到，
-   红比绿了但功能不在更诚实。想要能刷的固件就 `with_fttr=false`，PON + FTTR 之外的部分照旧。
+3. **`with_fttr=true` 会红，但红的位置很后、很有用。** 编译期障碍已经全部清掉了——构建
+   42286251323 里 `kmod-fttr-fmcs-6.18.55.2024.0418.0001-r1.apk` 打出包了，四个 fttr 包
+   （kmod / fttr-tools / hm2004-fttr-firmware / luci-app-h3c-fttr）都进了 rootfs manifest，
+   rootfs 内容门禁也过了；唯一红的步骤是上面那条运行时门禁。这是刻意的：文档要求「fttr 插件可用」，
+   而现在只能做到「装得上、跑不起」，红比「绿但功能不在」诚实。
+   因为上传排在门禁之前，红的那一轮产物照样归档，不用重跑两小时。
+   想要能刷的固件就 `with_fttr=false`，PON + honk + Vantage 主题照旧，那条线已经全绿发过 Release。
 
 ---
 
