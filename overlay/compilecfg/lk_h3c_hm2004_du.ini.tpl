@@ -17,5 +17,9 @@ TARGET_TAGS=an7581
 ; 写得比设备配置和片段都晚，于是 -recovery.itb 直接不产出（实测构建 42116233200 就这样）。
 ; recipe 的意图是「加快编译、省空间」，与需求文档「四、4 要救砖完整固件」相冲，
 ; 这里按文档优先。sysupgrade.itb 的内容不受这项影响，多出来的只是一个独立镜像。
-ADD_RECIPES=airoha_an7581,luci_app_airoha_npu,feed_pins,ebpf_btf,honk,disable_mosdns@FTTR_ADD@
-DISABLE_RECIPES=luci_app_cpu_temp_status,tailscale_awg,disable_initramfs
+ADD_RECIPES=airoha_an7581,luci_app_airoha_npu,feed_pins,ebpf_btf,honk,vantage_feed,luci_theme_vantage,disable_mosdns@FTTR_ADD@
+; default_theme_fluent 被关掉是必要的，不是偏好：
+; Vantage 自带的注册脚本叫 30_luci-theme-vantage，引擎那个叫 990_set_fluent_default，
+; uci-defaults 按文件名顺序执行，990 一定盖掉 30 —— 不关就永远进不了 Vantage。
+; Fluent 主题包本身保留，LuCI 里还能切回去。
+DISABLE_RECIPES=luci_app_cpu_temp_status,tailscale_awg,disable_initramfs,default_theme_fluent

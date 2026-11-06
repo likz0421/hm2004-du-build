@@ -59,7 +59,7 @@ fi
 echo "引擎认识的阶段：$(printf '%s ' $phases)"
 
 # ---- 逐个验我们的 recipe ----
-for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr feed_pins; do
+for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr feed_pins vantage_feed luci_theme_vantage; do
     f="$REPO_DIR/overlay/recipes/$r/recipe.json"
     recipe_ok=1
     if [ ! -f "$f" ]; then
@@ -101,6 +101,15 @@ for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr feed_pins; do
             recipe_ok=0
         fi
     done < <(jq -r '.actions.script // empty' "$f" | tr -d '\r')
+
+    # configs 动作引用的片段文件也必须存在，否则引擎到构建中途才 recipe_die。
+    while IFS= read -r cf; do
+        [ -n "$cf" ] || continue
+        if [ ! -f "$REPO_DIR/overlay/recipes/$r/$cf" ]; then
+            fail "$r 引用了不存在的配置片段：$cf"
+            recipe_ok=0
+        fi
+    done < <(jq -r '.actions.configs[]?' "$f" | tr -d '\r')
 
     [ "$recipe_ok" = "1" ] && echo "√ $r：结构合法、phase=$phase 可执行、目标匹配、引用文件齐全"
 done

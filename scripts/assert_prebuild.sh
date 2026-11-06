@@ -55,6 +55,33 @@ if [ ! -f "$CFG" ]; then
     exit 1
 fi
 
+# --- 8. 主题（Vantage 作主图）---
+# 与需求文档无关的一条产品决定：Vantage 是主图。
+# 主题的 feed 在源码树自带的 feeds.conf 之外，由 vantage_feed recipe 追加，
+# 所以判据要看追加后的结果（recipe 的 addFeeds 写进哪个文件不由我们决定）。
+for f in "$FEEDS" "$BUILD_DIR/feeds.conf.default"; do
+    [ -f "$f" ] || continue
+    if grep -qF "$VANTAGE_FEED_URL.git^$VANTAGE_SHA" "$f"; then
+        vantage_pinned=1
+        echo "√ vantage feed 已锁版本（$(basename "$f")）"
+        break
+    fi
+done
+if [ "${vantage_pinned:-0}" != "1" ]; then
+    missing+=("vantage feed 没在任何 feeds 文件里锁到 $VANTAGE_SHA")
+    fail=1
+fi
+for p in PACKAGE_luci-theme-vantage PACKAGE_luci-i18n-vantage-theme-zh-cn; do
+    need_cfg_y "$CFG" "$p"
+done
+# 主题自带的注册脚本是 30_luci-theme-vantage，引擎那个是 990_set_fluent_default；
+# uci-defaults 按文件名顺序跑，990 一定盖掉 30。所以 Fluent 的默认主题脚本必须不在。
+fluent_default="$BUILD_DIR/package/base-files/files/etc/uci-defaults/990_set_fluent_default"
+if [ -e "$fluent_default" ]; then
+    missing+=("990_set_fluent_default 还在源码树里：它会在设备上把主图盖回 Fluent，Vantage 白装")
+    fail=1
+fi
+
 echo "=============== 构建设置核验 ==============="
 
 # --- 1. 源码就是我们 pin 的那个 commit ---

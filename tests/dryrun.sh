@@ -79,6 +79,8 @@ PONWRT_SHA=$build_sha
 HONK_FEED_URL=https://github.com/kenzok8/openwrt-honk
 HONK_SHA=$FAKE_HONK_SHA
 FTTR_FEED_URL=https://github.com/rayniel/openwrt-hm2004-feed
+VANTAGE_FEED_URL=https://github.com/anothaDev/luci-theme-vantage
+VANTAGE_SHA=$FAKE_VANTAGE_SHA
 FTTR_SHA=$FAKE_FTTR_SHA
 BUILD_TARGET=lk_h3c_hm2004_du
 IMAGE_PROFILE=h3c_hm2004-du
@@ -88,6 +90,7 @@ EOF
 
 FAKE_HONK_SHA=1111111111111111111111111111111111111111
 FAKE_FTTR_SHA=2222222222222222222222222222222222222222
+FAKE_VANTAGE_SHA=6666666666666666666666666666666666666666
 
 make_fake_pins_feeds() {
     # 3 条就够测逻辑；SHA 用假值，和 make_pins 里的 HONK/FTTR 假 SHA 同一套。
@@ -123,6 +126,7 @@ EOF
     {
         printf 'src-git honk https://github.com/kenzok8/openwrt-honk.git^%s\n' "$FAKE_HONK_SHA"
         printf 'src-git hm2004 https://github.com/rayniel/openwrt-hm2004-feed.git^%s\n' "$FAKE_FTTR_SHA"
+        printf 'src-git vantage https://github.com/anothaDev/luci-theme-vantage.git^%s\n' "$FAKE_VANTAGE_SHA"
         while read -r fname furl fsha; do
             case "$fname" in '' | '#'*) continue ;; esac
             printf 'src-git %s %s^%s\n' "$fname" "$furl" "$fsha"
@@ -189,6 +193,8 @@ CONFIG_PACKAGE_kmod-fttr-fmcs=y
 CONFIG_PACKAGE_fttr-tools=y
 CONFIG_PACKAGE_hm2004-fttr-firmware=y
 CONFIG_PACKAGE_luci-app-h3c-fttr=y
+CONFIG_PACKAGE_luci-theme-vantage=y
+CONFIG_PACKAGE_luci-i18n-vantage-theme-zh-cn=y
 CONFIG_USE_APK=y
 CONFIG_SIGNED_PACKAGES=y
 CONFIG_SIGN_FIRMWARE=y
@@ -389,6 +395,25 @@ echo "src-git hm2004 https://github.com/rayniel/openwrt-hm2004-feed.git^22222222
 sed -i 's|^src-git luci .*|src-git luci https://github.com/immortalwrt/luci.git|' "$B/feeds.conf"
 run_expect fail "上游 feed 没锁版本要拦" "luci 没有锁到" prebuild
 sed -i 's|^src-git luci https://github.com/immortalwrt/luci.git$|src-git luci https://github.com/immortalwrt/luci.git^4444444444444444444444444444444444444444|' "$B/feeds.conf"
+
+# 主图三兄弟：主题包、中文语言包、feed 锁版本、以及不能留下 Fluent 的默认脚本
+sed -i '/^CONFIG_PACKAGE_luci-theme-vantage=y$/d' "$B/.config"
+run_expect fail "Vantage 主题没装上要拦" "luci-theme-vantage" prebuild
+echo "CONFIG_PACKAGE_luci-theme-vantage=y" >>"$B/.config"
+
+sed -i '/^CONFIG_PACKAGE_luci-i18n-vantage-theme-zh-cn=y$/d' "$B/.config"
+run_expect fail "Vantage 中文包没装上要拦" "luci-i18n-vantage-theme-zh-cn" prebuild
+echo "CONFIG_PACKAGE_luci-i18n-vantage-theme-zh-cn=y" >>"$B/.config"
+
+sed -i '/^src-git vantage /d' "$B/feeds.conf"
+sed -i '/^src-git vantage /d' "$B/feeds.conf.default" 2>/dev/null || true
+run_expect fail "vantage feed 没锁版本要拦" "vantage feed 没在任何" prebuild
+echo "src-git vantage https://github.com/anothaDev/luci-theme-vantage.git^$FAKE_VANTAGE_SHA" >>"$B/feeds.conf"
+
+mkdir -p "$B/package/base-files/files/etc/uci-defaults"
+printf '#!/bin/sh\n' >"$B/package/base-files/files/etc/uci-defaults/990_set_fluent_default"
+run_expect fail "Fluent 默认脚本还在要拦" "盖回 Fluent" prebuild
+rm -f "$B/package/base-files/files/etc/uci-defaults/990_set_fluent_default"
 
 mv "$B/private-key.pem" "$B/private-key.pem.bak"
 run_expect fail "缺签名私钥要拦" "APK_SIGNING_PRIVATE_KEY" prebuild

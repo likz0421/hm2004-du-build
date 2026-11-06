@@ -21,7 +21,7 @@ overlay/                     盖到引擎上的差异（本仓库真正的产物
   compilecfg/lk_h3c_hm2004_du.ini.tpl    设备构建元信息（带 COMMIT_HASH）
   deconfig/lk_h3c_hm2004_du.config       设备 dotconfig
   deconfig/fragments/{ebpf_btf,honk,fttr}.config
-  recipes/feed_pins|ebpf_btf|honk|hm2004_fttr_feed|h3c-hm2004-du_fttr
+  recipes/feed_pins|ebpf_btf|honk|hm2004_fttr_feed|h3c-hm2004-du_fttr|vantage_feed|luci_theme_vantage
 scripts/                     apply_overlay / preclone / load_signing_key
                              assert_prebuild / assert_artifacts / check_fttr_dts
 tests/                       dryrun.sh（门禁的正反分支）/ check_recipes.sh
@@ -273,7 +273,31 @@ ENGINE_DIR=<引擎目录> bash tests/check_recipes.sh       # 用引擎自己的
 不是另写一套。它会额外拦住两类静默失效：phase 拼错（引擎只校验「非空字符串」，不在阶段表里的
 phase 永远不执行且不报错）、`when.targets` 与目标名不符（被计划器过滤掉，同样静默）。
 
-## 8. 改版本
+## 8. 界面主图：Vantage
+
+`anothaDev/luci-theme-vantage`（GPL-3.0，546★，自述面向 OpenWrt 25.12）按 SHA 锁进工程，
+作为固件的默认主题。接入方式完全走引擎已有的 recipe 机制，不魔改：
+
+| 项 | 值 | 依据 |
+| --- | --- | --- |
+| feed | `src-git vantage https://github.com/anothaDev/luci-theme-vantage.git^e35a8e7f…` | `pins.env` 的 `VANTAGE_SHA` |
+| 装机包 | `luci-theme-vantage`、`luci-i18n-vantage-theme-zh-cn` | 主题 Makefile 的 `PKG_NAME`、`LUCI_BASENAME:=vantage-theme`；`po/zh_Hans` 经 `feeds/luci/luci.mk:92` 的 `LUCI_LC_ALIAS.zh_Hans=zh-cn` 映射成 `zh-cn` |
+| 默认怎么生效 | 主题自带 `root/etc/uci-defaults/30_luci-theme-vantage`：注册 `luci.themes.Vantage=/luci-static/vantage`，且仅在**新装**时把 `luci.main.mediaurlbase` 指过去（升级不动管理员已选主题） | 直接读了那份脚本，不是靠 README 转述 |
+
+**必须同时关掉 `default_theme_fluent`**，这不是审美取舍而是执行顺序问题：引擎那份脚本叫
+`990_set_fluent_default`，uci-defaults 按文件名排序执行，`990` 必然盖掉 `30` —— 不关的话
+主题包装了、也注册了，但设备上界面还是 Fluent。Fluent 的**主题包**（`luci_theme_fluent`）保留，
+LuCI 里可以切回去；只把"默认"这一票投给 Vantage。
+
+`luci-app-vantage`（同仓库的 live dashboard 应用）**没有**装：它是应用不是主题，你没要求。
+要加就在 `overlay/recipes/luci_theme_vantage/configs/vantage.config` 加一行
+`CONFIG_PACKAGE_luci-app-vantage=y`，feed 已锁好，不用再动别处。
+
+门禁核对四条：feed 锁版本、主题包选中、中文包选中、`990_set_fluent_default` **不在**源码树里
+（在就说明默认会被顶回去）。`scripts/assert_prebuild.sh` 的 8、`tests/dryrun.sh` 场景 2 的
+四条反例。
+
+## 9. 改版本
 
 只改 `pins.env` 和 `pins.feeds`。每个 pin 的作用：
 
@@ -285,5 +309,5 @@ phase 永远不执行且不报错）、`when.targets` 与目标名不符（被�
 * `PONWRT_SHA` —— 固件源码树，PON 硬件与 DTS 都在这。写进 ini 的 `COMMIT_HASH`，
   构建前后各校验一次 HEAD。
 * `MERGE_REPO`/`MERGE_SHA` —— 仅作对照参考，工作流会验证该 commit 存在，不参与构建。
-* `HONK_SHA` / `FTTR_SHA` —— 两个 feed 的锁版本，feed 名固定为 `honk` / `hm2004`
+* `HONK_SHA` / `FTTR_SHA` / `VANTAGE_SHA` —— 附加 feed 的锁版本，feed 名固定为 `honk` / `hm2004`
   （后者是包 Makefile 里硬编码的路径 `$(TOPDIR)/feeds/hm2004/original`，改名即失效）。

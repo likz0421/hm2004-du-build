@@ -1,0 +1,38 @@
+{
+  "$schema": "../recipe.schema.json",
+  "name": "luci_theme_vantage",
+  "description": "把 Vantage 主题（含简体中文语言包）装进固件；默认主题的切换交给主题自带的 30_luci-theme-vantage",
+  "enabled": false,
+  "priority": 0,
+  "phase": "pre_defconfig",
+  "depends": [
+    "vantage_feed"
+  ],
+  "conflicts": [
+    "default_theme_fluent"
+  ],
+  "tags": [
+    "theme",
+    "luci"
+  ],
+  "when": {
+    "targets": [
+      "lk_h3c_hm2004_du"
+    ],
+    "repo": [],
+    "branch": [],
+    "tags": []
+  },
+  "actions": {
+    "addFeeds": [],
+    "removeFeeds": [],
+    "importPackages": [],
+    "removePackageDirs": [],
+    "patches": [],
+    "files": [],
+    "configs": [
+      "configs/vantage.config"
+    ],
+    "script": null
+  }
+}

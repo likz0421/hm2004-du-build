@@ -57,7 +57,7 @@ for frag in ebpf_btf honk fttr; do
 done
 
 echo "==> 安装 recipe（先删上游同名目录，避免留下没引用的旧文件）"
-for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr feed_pins; do
+for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr feed_pins vantage_feed luci_theme_vantage; do
     rm -rf "$WT/recipes/$r"
     cp -R "$REPO_DIR/overlay/recipes/$r" "$WT/recipes/$r"
 done
@@ -69,12 +69,30 @@ cmp -s "$REPO_DIR/pins.feeds" "$WT/recipes/feed_pins/pins.feeds" || {
     echo "pins.feeds 复制后不一致" >&2
     exit 1
 }
-sed -e "s|@HONK_FEED_URL@|$HONK_FEED_URL|g" -e "s|@HONK_SHA@|$HONK_SHA|g" \
-    "$WT/recipes/honk/recipe.json" >"$WT/recipes/honk/recipe.json.tmp" &&
-    mv "$WT/recipes/honk/recipe.json.tmp" "$WT/recipes/honk/recipe.json"
-sed -e "s|@FTTR_FEED_URL@|$FTTR_FEED_URL|g" -e "s|@FTTR_SHA@|$FTTR_SHA|g" \
-    "$WT/recipes/hm2004_fttr_feed/recipe.json" >"$WT/recipes/hm2004_fttr_feed/recipe.json.tmp" &&
-    mv "$WT/recipes/hm2004_fttr_feed/recipe.json.tmp" "$WT/recipes/hm2004_fttr_feed/recipe.json"
+# recipe.json 里的 @占位符@ 在这里渲染。分隔符用 |，因为 URL 里有冒号。
+for entry in "honk|@HONK_FEED_URL@|@HONK_SHA@|$HONK_FEED_URL|$HONK_SHA" \
+    "hm2004_fttr_feed|@FTTR_FEED_URL@|@FTTR_SHA@|$FTTR_FEED_URL|$FTTR_SHA" \
+    "vantage_feed|@VANTAGE_FEED_URL@|@VANTAGE_SHA@|$VANTAGE_FEED_URL|$VANTAGE_SHA"; do
+    IFS='|' read -r rdir ph_url ph_sha real_url real_sha <<EOF
+$entry
+EOF
+    f="$WT/recipes/$rdir/recipe.json"
+    if [ ! -f "$f" ]; then
+        echo "要渲染的 recipe 不存在：$f" >&2
+        exit 1
+    fi
+    sed -e "s|$ph_url|$real_url|g" -e "s|$ph_sha|$real_sha|g" "$f" >"$f.tmp" || {
+        echo "占位符替换失败：$f" >&2
+        exit 1
+    }
+    mv "$f.tmp" "$f"
+    # 替换没生效就是模板或变量名写串了，当场失败，而不是把 @占位符@ 带进构建。
+    if grep -q '@' "$f"; then
+        echo "recipe.json 里还留着占位符：$f" >&2
+        grep -n '@' "$f" >&2
+        exit 1
+    fi
+done
 chmod +x "$WT/recipes/h3c-hm2004-du_fttr/apply.sh"
 
 echo "==> 检查该盖上的文件真的盖上了"
@@ -91,6 +109,9 @@ for f in \
     "recipes/feed_pins/recipe.json" \
     "recipes/feed_pins/apply.sh" \
     "recipes/feed_pins/pins.feeds" \
+    "recipes/vantage_feed/recipe.json" \
+    "recipes/luci_theme_vantage/recipe.json" \
+    "recipes/luci_theme_vantage/configs/vantage.config" \
     "recipes/h3c-hm2004-du_fttr/recipe.json" \
     "recipes/h3c-hm2004-du_fttr/apply.sh"; do
     if [ ! -f "$WT/$f" ]; then
@@ -117,7 +138,7 @@ fi
 
 # recipe.json 必须符合引擎自己的 schema 校验入口，坏 JSON 在这里就拦掉。
 if command -v jq >/dev/null 2>&1; then
-    for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr feed_pins; do
+    for r in ebpf_btf honk hm2004_fttr_feed h3c-hm2004-du_fttr feed_pins vantage_feed luci_theme_vantage; do
         jq -e . "$WT/recipes/$r/recipe.json" >/dev/null || {
             echo "recipe.json 不是合法 JSON：$r" >&2
             exit 1
