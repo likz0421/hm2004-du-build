@@ -271,16 +271,19 @@ honk 包不在 manifest → 红；FTTR 运行时缺口 → 红（在产物已归
        补 `#include <linux/if_ether.h>`。全文扫过其余符号（if_nametoindex / htons /
        struct ifreq 都有对应头，没有 strlcpy、bcopy 之类 glibc 专有函数），
        所以这是该文件最后一个此类问题。
-     - 为此工作流加了「预编译 fttr 用户态包」一步：`fttr-tools` 不需要内核，只要交叉
-       工具链，约 30 分钟就能暴露编译错误；放在整场构建里要等 1 小时 20 分才轮到它。
-       这类错误已经烧过四轮，值得单独提出来。
-
      补丁用 `patch --fuzz=0` 打，feed 源码一漂移就当场失败，绝不容忍"凑合打上"；
      `apply.sh` 打完还要过六条自检，`assert_prebuild.sh` 在构建前核对同样的点。
-     这里有个自己的教训值得记：第一版自检用 `grep '../driver'` 宽判，结果命中了
+     第一条教训：第一版自检用 `grep '../driver'` 宽判，结果命中了
      **补丁注释里写的 `../driver`**，把自己误判成失败——判据必须盯 make 真正使用的
      那一行（`^miniolt: miniolt.c fmcs_uapi.h`），而不是任一处字符串。这条是本机
      测试直接拒掉的，不是等到 CI 上才发现。
+
+     第二条教训（反面，记下来免得重犯）：为了缩短反馈环，我加过一步"只预编译 fttr
+     用户态包"（`make package/feeds/hm2004/fttr-tools/compile`），想在 30 分钟内暴露
+     编译错误。结果它自己造假报警——脱离 `world` 流程单独调用时，make 会去
+     `host-compile` `package/utils/lua`，而那个 host 包单独编不了（0.09 秒失败，
+     编译器根本没起来），于是真正要测的 miniolt 一行都没编到，还把整轮判红。
+     **会误报的加速比没有加速更糟**，该步已删除，判定交回正常构建流程。
    * 驱动要 `clk-gpios`/`data-gpios`/…，ponwrt 的 DTS 给的是 `fpga-clk-gpios`/`fpga-data-gpios`，
      con_id 对不上 → probe 拿不到线。这是**硬件走线未确认**，不是编译问题，
      所以由 `check_fttr_dts.sh` 在产物归档后再拦，不自动改设备树（改就是猜引脚）。

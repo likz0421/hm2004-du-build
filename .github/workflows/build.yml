@@ -157,19 +157,6 @@ jobs:
           ENGINE_DIR: ${{ github.workspace }}/engine
           WITH_FTTR: ${{ inputs.with_fttr && '1' || '0' }}
 
-      - name: 预编译 fttr 用户态包（快速回环）
-        # fttr-tools 不依赖内核，只需要交叉工具链：这一步大约 30 分钟就能把
-        # miniolt 的编译错误暴露出来，而放在整场构建里要等 1 小时 20 分才轮得到它。
-        # 已经为此烧过四轮，所以把它单独提出来。
-        if: ${{ !inputs.preflight_only && inputs.with_fttr }}
-        working-directory: ${{ github.workspace }}/engine/action_build
-        run: |
-          set -o pipefail
-          make -j"$(nproc)" \
-            package/feeds/hm2004/fttr-tools/compile \
-            package/feeds/hm2004/hm2004-fttr-firmware/compile 2>&1 |
-            tee "$GITHUB_WORKSPACE/fttr-preflight.log"
-
       - name: 配置快照（预检）
         if: always()
         run: |
@@ -209,7 +196,6 @@ jobs:
           fi
           cp "$GITHUB_WORKSPACE/overlay.diff" "$out/" 2>/dev/null || true
           cp "$GITHUB_WORKSPACE/build.log" "$out/" 2>/dev/null || true
-          cp "$GITHUB_WORKSPACE/fttr-preflight.log" "$out/" 2>/dev/null || true
           cp "$GITHUB_WORKSPACE/pins.env" "$out/"
           cp "$GITHUB_WORKSPACE/pins.feeds" "$out/"
 
